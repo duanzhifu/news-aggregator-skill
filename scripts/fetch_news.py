@@ -8,6 +8,11 @@ import time
 import re
 import concurrent.futures
 import os
+import threading
+import ipaddress
+import socket
+from functools import lru_cache
+from urllib.parse import urljoin, urlsplit
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 import subprocess
@@ -26,26 +31,142 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+GITHUB_METADATA_CACHE_PATH = os.path.join(os.path.dirname(__file__), '.cache', 'github_repo_metadata.json')
+GITHUB_METADATA_CACHE_TTL = 6 * 60 * 60
+_github_cache = {}
+_github_cache_loaded = False
+_github_cache_lock = threading.Lock()
+
 from bs4 import XMLParsedAsHTMLWarning
 import warnings
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-def filter_by_hours(items, hours=24):
-    """Keep only items published within the last N hours.
-    Items whose time cannot be parsed are kept (fail-open)."""
+def parse_item_datetime(item):
+    """Parse the publication timestamp exposed by a source."""
+    fields = (
+        'time', 'published', 'published_at', 'pub_time', 'publish_time',
+        'created_at', 'created_at_i', 'timestamp', 'date', 'updated_at',
+        'time_ms',
+    )
+    value = next((item.get(field) for field in fields if item.get(field) not in (None, '')), None)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) or str(value).strip().isdigit():
+        number = float(value)
+        if number > 10**12:
+            number /= 1000
+        if number > 10**9:
+            return datetime.fromtimestamp(number, tz=timezone.utc)
+
+    text = re.sub(r'^\s*⚠️\s*', '', str(value).strip())
+    lowered = text.casefold()
+    if lowered in {'today', 'real-time', 'realtime', 'hot', 'updated recently', 'recent'}:
+        return datetime.now(timezone.utc)
+    relative = re.search(r'(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|分钟前|分钟|小时|天)\s*(ago|前)?', lowered)
+    if relative:
+        amount = float(relative.group(1))
+        unit = relative.group(2)
+        if unit.startswith(('minute', 'min')) or unit in {'分钟前', '分钟'}:
+            return datetime.now(timezone.utc) - timedelta(minutes=amount)
+        if unit.startswith(('hour', 'hr')) or unit in {'小时'}:
+            return datetime.now(timezone.utc) - timedelta(hours=amount)
+        return datetime.now(timezone.utc) - timedelta(days=amount)
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_item_datetime(item):
+    """Parse common feed, API and Chinese relative timestamps consistently."""
+    fields = (
+        'time', 'published', 'published_at', 'pub_time', 'publish_time',
+        'created_at', 'created_at_i', 'timestamp', 'date', 'updated_at', 'time_ms',
+    )
+    value = next((item.get(field) for field in fields if item.get(field) not in (None, '')), None)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) or str(value).strip().isdigit():
+        number = float(value)
+        if number > 10**12:
+            number /= 1000
+        if number > 10**9:
+            return datetime.fromtimestamp(number, tz=timezone.utc)
+
+    text = str(value).strip()
+    lowered = text.casefold()
+    if lowered in {'hot', 'recent', 'realtime', 'real-time', 'updated recently'}:
+        return None
+    relative = re.search(
+        r'(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|分钟前|分钟|小时|天)\s*(ago|前)?',
+        lowered,
+    )
+    if relative:
+        amount = float(relative.group(1))
+        unit = relative.group(2)
+        if unit.startswith(('minute', 'min')) or '分钟' in unit:
+            return datetime.now(timezone.utc) - timedelta(minutes=amount)
+        if unit.startswith(('hour', 'hr')) or '小时' in unit:
+            return datetime.now(timezone.utc) - timedelta(hours=amount)
+        return datetime.now(timezone.utc) - timedelta(days=amount)
+    for marker, offset in (('今天', 0), ('昨天', 1)):
+        match = re.fullmatch(rf'{marker}\s*(\d{{1,2}}):(\d{{2}})', text)
+        if match:
+            base = datetime.now(timezone.utc) - timedelta(days=offset)
+            return base.replace(
+                hour=int(match.group(1)), minute=int(match.group(2)), second=0, microsecond=0
+            )
+    if text.casefold() in {'刚刚', 'just now'}:
+        return datetime.now(timezone.utc)
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def filter_by_hours(items, hours=72, stats=None):
+    """Keep only items with a parseable publication time in the recent window."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     result = []
     for item in items:
-        t = item.get('time', '')
-        try:
-            pub = parsedate_to_datetime(str(t))
-            if pub.tzinfo is None:
-                pub = pub.replace(tzinfo=timezone.utc)
-            if pub >= cutoff:
-                result.append(item)
-        except Exception:
-            result.append(item)  # unparseable → keep
+        published = parse_item_datetime(item)
+        source = item.get('source', 'unknown')
+        if stats is not None:
+            stats.setdefault(source, {'received': 0, 'time_missing': 0, 'too_old': 0, 'kept': 0})
+            stats[source]['received'] += 1
+        if published is None:
+            if stats is not None:
+                stats[source]['time_missing'] += 1
+            continue
+        if published >= cutoff or item.get('is_trending') is True:
+            result.append(item)
+            if stats is not None:
+                stats[source]['kept'] += 1
+        elif stats is not None:
+            stats[source]['too_old'] += 1
     return result
+
+
+AI_TIME_INTERPRETATION_MODE = False
+
+
+def source_time_filter(items, hours):
+    """Preserve raw candidates when downstream AI owns time interpretation."""
+    if AI_TIME_INTERPRETATION_MODE:
+        return items
+    return filter_by_hours(items, hours=hours)
 
 
 def filter_items(items, keyword=None):
@@ -56,29 +177,277 @@ def filter_items(items, keyword=None):
     regex = r'(?i)(' + pattern + r')'
     return [item for item in items if re.search(regex, item['title'])]
 
+
+@lru_cache(maxsize=256)
+def _resolves_to_public_address(hostname):
+    """Reject hosts that resolve to private or otherwise local addresses."""
+    try:
+        addresses = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except (OSError, socket.gaierror):
+        return False
+    if not addresses:
+        return False
+    for address in {entry[4][0] for entry in addresses}:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
+def is_safe_http_url(url):
+    """Allow only public HTTP(S) URLs without embedded credentials."""
+    try:
+        parsed = urlsplit(str(url).strip())
+        hostname = parsed.hostname
+        if parsed.scheme not in {"http", "https"} or not hostname:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            return _resolves_to_public_address(hostname)
+        return not (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
+    except ValueError:
+        return False
+
+
+def _fetch_public_url(url, max_redirects=3, max_bytes=5 * 1024 * 1024):
+    current_url = url
+    for _ in range(max_redirects + 1):
+        if not is_safe_http_url(current_url):
+            return None
+        response = None
+        try:
+            response = requests.get(
+                current_url,
+                headers=HEADERS,
+                timeout=5,
+                allow_redirects=False,
+                stream=True,
+            )
+            if 300 <= response.status_code < 400:
+                location = response.headers.get("Location")
+                if not location:
+                    return None
+                current_url = urljoin(current_url, location)
+                continue
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type and not (
+                content_type.startswith("text/")
+                or content_type in {"application/xhtml+xml", "application/xml"}
+            ):
+                return None
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > max_bytes:
+                return None
+            # urllib3 does not automatically decode streamed raw reads unless
+            # decode_content is enabled explicitly.
+            response.raw.decode_content = True
+            body = response.raw.read(max_bytes + 1)
+            return None if len(body) > max_bytes else body
+        except (OSError, ValueError, requests.RequestException):
+            return None
+        finally:
+            if response is not None:
+                response.close()
+    return None
+
+MIN_ARTICLE_CONTENT_CHARS = 200
+MAX_EVIDENCE_CHARS = 4000
+MIN_EVIDENCE_CHARS = 300
+
+
+def _is_readable_text(text, min_chars=20):
+    """Reject binary payloads or irreversibly decoded text before AI processing."""
+    if not isinstance(text, str) or len(text.strip()) < min_chars:
+        return False
+    sample = text[:4000]
+    replacement_ratio = sample.count('\ufffd') / len(sample)
+    control_count = sum(
+        1 for char in sample
+        if ord(char) < 32 and char not in {'\n', '\r', '\t'}
+    )
+    return replacement_ratio <= 0.01 and control_count / len(sample) <= 0.01
+
+
+def _truncate_evidence(text, max_chars):
+    if len(text) <= max_chars:
+        return text.strip()
+    cut = text.rfind('\n', 0, max_chars)
+    return text[:cut if cut > 0 else max_chars].strip()
+
+
+def _extract_article_text(html_content):
+    """Extract the most likely article container before falling back to body text."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    for element in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
+        element.decompose()
+    selectors = (
+        "article", "main", "[role='main']", ".article-content", ".post-content",
+        ".entry-content", ".markdown-body", ".prose", ".content",
+    )
+    candidates = []
+    for selector in selectors:
+        for node in soup.select(selector):
+            text = node.get_text(separator='\n', strip=True)
+            if text:
+                candidates.append(text)
+    text = max(candidates, key=len) if candidates else soup.get_text(separator='\n', strip=True)
+    lines = [line.strip() for line in text.splitlines()]
+    cleaned = []
+    previous_empty = False
+    for line in lines:
+        if not line:
+            if not previous_empty:
+                cleaned.append('')
+            previous_empty = True
+            continue
+        previous_empty = False
+        cleaned.append(line)
+    full_text = '\n'.join(cleaned).strip()
+    if len(full_text) <= 15000:
+        return full_text
+    cut = full_text.rfind('\n\n', 0, 15000)
+    if cut == -1:
+        cut = full_text.rfind('\n', 0, 15000)
+    return full_text[:cut if cut > 0 else 15000].strip()
+
+
 def fetch_url_content(url):
-    """
-    Fetches the content of a URL and extracts text from paragraphs.
-    Truncates to 3000 characters.
-    """
-    if not url or not url.startswith('http'):
+    """Fetch article text over HTTP; browser rendering is handled as a fallback."""
+    if not url:
         return ""
     try:
-        response = requests.get(url, headers=HEADERS, timeout=5)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-         # Remove script and style elements
-        for script in soup(["script", "style", "nav", "footer", "header"]):
-            script.extract()
-        # Get text
-        text = soup.get_text(separator=' ', strip=True)
-        # Simple cleanup
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = ' '.join(chunk for chunk in chunks if chunk)
-        return text[:3000]
+        content = _fetch_public_url(url)
+        text = _extract_article_text(content) if content else ""
+        return text if _is_readable_text(text) else ""
     except Exception:
         return ""
+
+
+def fetch_url_evidence(url, max_bytes=384 * 1024, max_chars=MAX_EVIDENCE_CHARS):
+    """Return a bounded DOM text snapshot without retaining the full article."""
+    evidence, _ = _fetch_url_evidence_with_method(url, max_bytes=max_bytes, max_chars=max_chars)
+    return evidence
+
+
+def _fetch_url_evidence_with_method(url, max_bytes=384 * 1024, max_chars=MAX_EVIDENCE_CHARS):
+    """Return a readable bounded snapshot and the method used to obtain it."""
+    if not url:
+        return "", "feed_metadata"
+    try:
+        content = _fetch_public_url(url, max_bytes=max_bytes)
+        text = _extract_article_text(content) if content else ""
+        method = "bounded_dom_text"
+    except Exception:
+        text = ""
+
+    if not _is_readable_text(text):
+        text = fetch_url_content_browser(url)
+        method = "bounded_browser_text"
+    if not _is_readable_text(text):
+        return "", "feed_metadata"
+    return _truncate_evidence(text, max_chars), method
+
+
+def _fetch_deep_evidence(url, max_chars=MAX_EVIDENCE_CHARS):
+    """Retry short snapshots with full HTTP text, then a longer browser render."""
+    text = fetch_url_content(url)
+    method = "deep_dom_text"
+    if not _is_readable_text(text, min_chars=MIN_EVIDENCE_CHARS):
+        text = fetch_url_content_browser(url, wait_ms=3000)
+        method = "deep_browser_text"
+    if not _is_readable_text(text, min_chars=MIN_EVIDENCE_CHARS):
+        return "", ""
+    return _truncate_evidence(text, max_chars), method
+
+
+def enrich_items_with_evidence(items, max_workers=8):
+    """Attach short, AI-readable page snapshots while preserving item order."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_item = {
+            executor.submit(_fetch_url_evidence_with_method, item.get('url', '')): item
+            for item in items
+        }
+        for future in concurrent.futures.as_completed(future_to_item):
+            item = future_to_item[future]
+            try:
+                evidence, method = future.result()
+            except Exception:
+                evidence, method = "", "feed_metadata"
+            if evidence:
+                item['evidence_snapshot'] = evidence
+                item['evidence_status'] = 'fetched'
+                item['evidence_method'] = method
+                item['evidence_length'] = len(evidence)
+            else:
+                item['evidence_status'] = 'unavailable'
+                item['evidence_method'] = 'feed_metadata'
+                item['evidence_length'] = 0
+
+    short_items = [
+        item for item in items
+        if item.get('evidence_status') == 'fetched'
+        and item.get('evidence_length', 0) < MIN_EVIDENCE_CHARS
+    ]
+    if short_items:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(short_items))) as executor:
+            future_to_item = {
+                executor.submit(_fetch_deep_evidence, item.get('url', '')): item
+                for item in short_items
+            }
+            for future in concurrent.futures.as_completed(future_to_item):
+                item = future_to_item[future]
+                try:
+                    evidence, method = future.result()
+                except Exception:
+                    evidence, method = "", ""
+                if evidence:
+                    item['evidence_snapshot'] = evidence
+                    item['evidence_status'] = 'fetched'
+                    item['evidence_method'] = method
+                    item['evidence_length'] = len(evidence)
+                else:
+                    item['evidence_status'] = 'insufficient'
+    return items
+
+
+def fetch_url_content_browser(url, wait_ms=1200):
+    """Render JS-heavy pages when the normal HTTP response has no usable body."""
+    if not url or not is_safe_http_url(url):
+        return ""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=HEADERS["User-Agent"])
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(wait_ms)
+            rendered = page.content()
+            browser.close()
+        return _extract_article_text(rendered)
+    except Exception:
+        return ""
+
 
 def enrich_items_with_content(items, max_workers=10):
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -89,8 +458,32 @@ def enrich_items_with_content(items, max_workers=10):
                 content = future.result()
                 if content:
                     item['content'] = content
+                    item['content_fetch_status'] = 'fetched'
+                    item['content_fetch_method'] = 'http'
+                    item['content_length'] = len(content)
+                else:
+                    item['content_fetch_status'] = 'unavailable'
+                    item['content_fetch_method'] = 'none'
+                    item['content_length'] = 0
             except Exception:
-                item['content'] = ""
+                item['content_fetch_status'] = 'unavailable'
+                item['content_fetch_method'] = 'none'
+                item['content_length'] = 0
+
+    for item in items:
+        content = item.get('content', '') or ''
+        if len(content) >= MIN_ARTICLE_CONTENT_CHARS:
+            continue
+        browser_content = fetch_url_content_browser(item.get('url', ''))
+        if browser_content:
+            item['content'] = browser_content
+            item['content_fetch_status'] = 'fetched'
+            item['content_fetch_method'] = 'browser'
+            item['content_length'] = len(browser_content)
+        elif content:
+            item['content_fetch_status'] = 'partial'
+            item['content_fetch_method'] = 'http'
+            item['content_length'] = len(content)
     return items
 
 # --- Source Fetchers ---
@@ -130,7 +523,7 @@ def fetch_hackernews(limit=5, keyword=None):
                     "url": hit.get('url') or f"https://news.ycombinator.com/item?id={hit['objectID']}",
                     "hn_url": f"https://news.ycombinator.com/item?id={hit['objectID']}",
                     "heat": f"{hit.get('points', 0)} points",
-                    "time": "Today" # Algolia return is recent by definition of filter
+                    "time": hit.get('created_at') or hit.get('created_at_i') or ""
                 })
             
             # Only return if we actually found something. 
@@ -228,12 +621,102 @@ def fetch_weibo(limit=5, keyword=None):
                 "title": title, 
                 "url": full_url, 
                 "heat": f"{heat}",
-                "time": "Real-time"
+                "time": ""
             })
             
         return filter_items(all_items, keyword)[:limit]
     except Exception: 
         return []
+
+def github_repo_slug(url):
+    match = re.match(r'https?://github\.com/([^/]+/[^/?#]+)', str(url or '').strip())
+    return match.group(1).rstrip('/') if match else ''
+
+
+def _load_github_cache():
+    global _github_cache_loaded, _github_cache
+    with _github_cache_lock:
+        if _github_cache_loaded:
+            return
+        try:
+            with open(GITHUB_METADATA_CACHE_PATH, 'r', encoding='utf-8') as handle:
+                payload = json.load(handle)
+            _github_cache = payload if isinstance(payload, dict) else {}
+        except (OSError, ValueError):
+            _github_cache = {}
+        _github_cache_loaded = True
+
+
+def _cache_github_metadata(slug, data):
+    with _github_cache_lock:
+        _github_cache[slug] = {'fetched_at': time.time(), 'data': data}
+        try:
+            os.makedirs(os.path.dirname(GITHUB_METADATA_CACHE_PATH), exist_ok=True)
+            with open(GITHUB_METADATA_CACHE_PATH, 'w', encoding='utf-8') as handle:
+                json.dump(_github_cache, handle, ensure_ascii=False, indent=2)
+        except OSError as error:
+            print(f'GitHub metadata cache write failed: {error}', file=sys.stderr)
+
+
+def _apply_github_metadata(item, data):
+    pushed_at = data.get('pushed_at')
+    if not pushed_at:
+        return item
+    enriched = dict(item)
+    enriched.update({
+        'time': pushed_at,
+        'time_kind': 'repository_last_push',
+        'updated_at': data.get('updated_at', ''),
+        'created_at': data.get('created_at', ''),
+        'language': data.get('language') or enriched.get('language', ''),
+        'description': data.get('description') or enriched.get('description', ''),
+        'stars': data.get('stargazers_count', ''),
+    })
+    return enriched
+
+
+def fetch_github_repo_metadata(item):
+    """Attach an accurate repository activity timestamp to a GitHub result."""
+    slug = github_repo_slug(item.get('url'))
+    if not slug:
+        return item
+    _load_github_cache()
+    cached = _github_cache.get(slug)
+    if isinstance(cached, dict) and time.time() - cached.get('fetched_at', 0) < GITHUB_METADATA_CACHE_TTL:
+        return _apply_github_metadata(item, cached.get('data') or {})
+    headers = {**HEADERS, 'Accept': 'application/vnd.github+json'}
+    token = os.environ.get('GITHUB_TOKEN', '').strip()
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    try:
+        response = requests.get(
+            f'https://api.github.com/repos/{slug}', headers=headers, timeout=10
+        )
+        status_code = getattr(response, 'status_code', 200)
+        if status_code in {403, 429}:
+            response_headers = getattr(response, 'headers', {})
+            remaining = response_headers.get('X-RateLimit-Remaining', '?')
+            reset = response_headers.get('X-RateLimit-Reset', '?')
+            print(
+                f'GitHub metadata rate limited for {slug}: status={status_code}, '
+                f'remaining={remaining}, reset={reset}',
+                file=sys.stderr,
+            )
+        response.raise_for_status()
+        data = response.json()
+        _cache_github_metadata(slug, data)
+        return _apply_github_metadata(item, data)
+    except (requests.RequestException, ValueError, TypeError) as error:
+        print(f'GitHub metadata fetch failed for {slug}: {error}', file=sys.stderr)
+        return item
+
+
+def enrich_github_items(items):
+    """Fetch GitHub metadata while preserving the source ranking order."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(fetch_github_repo_metadata, item) for item in items]
+        return [future.result() for future in futures]
+
 
 def fetch_github(limit=5, keyword=None):
     if keyword:
@@ -266,9 +749,10 @@ def fetch_github(limit=5, keyword=None):
                         "title": f"{title} - {desc}", 
                         "url": link,
                         "heat": "Topic Match",
-                        "time": "Updated recently"
+                        "time": ""
                      })
-                if items: return items[:limit]
+                if items:
+                    return enrich_github_items(items[:limit])
          except: pass
 
     # Default Trending
@@ -295,13 +779,14 @@ def fetch_github(limit=5, keyword=None):
             
             items.append({
                 "source": "GitHub Trending", 
-                "title": f"{title} - {desc_text}", 
+                "title": f"{title} - {desc_text}",
                 "url": link,
                 "heat": f"{stars} stars",
-                "time": "Today"
+                "time": "",
+                "is_trending": True,
             })
         except: continue
-    return filter_items(items, keyword)[:limit]
+    return enrich_github_items(filter_items(items, keyword)[:limit])
 
 def fetch_36kr(limit=5, keyword=None):
     try:
@@ -340,7 +825,7 @@ def fetch_v2ex(limit=5, keyword=None):
                 "title": t['title'], 
                 "url": t['url'],
                 "heat": f"{replies} replies",
-                "time": "Hot"
+                "time": datetime.fromtimestamp(created).isoformat() if created else ""
             })
         return filter_items(items, keyword)[:limit]
     except: return []
@@ -407,6 +892,13 @@ def fetch_producthunt(limit=5, keyword=None):
 # --- New Fetchers (RSS/API) ---
 
 from rss_parser import fetch_rss_feed
+from social_platforms import (
+    fetch_bilibili,
+    fetch_douyin,
+    fetch_wechat,
+    fetch_weibo_search,
+    consume_filter_stats,
+)
 
 # fetch_tldr_ai removed: all known feed URLs (feed.tldr.tech/ai, tldr.tech/ai/rss) return 404.
 
@@ -438,7 +930,7 @@ def fetch_huggingface_papers(limit=5, keyword=None):
                     "url": paper['url'],
                     "github": paper.get('github', ''),
                     "heat": paper.get('heat', ''),
-                    "time": datetime.now().strftime("%Y-%m-%d"), # Daily Papers are today's papers
+                    "time": "", # The source does not expose an article publication timestamp.
                     "summary": paper.get('summary', '')
                 })
         else:
@@ -549,6 +1041,9 @@ def fetch_devto(limit=5, keyword=None):
                 "title": art.get('title', ''),
                 "url": art.get('url', ''),
                 "heat": f"{art.get('positive_reactions_count', 0)} reactions",
+                "like": art.get('positive_reactions_count', 0),
+                "comment": art.get('comments_count', 0),
+                "view": art.get('page_views_count', 0),
                 "time": (art.get('published_at') or '')[:10],
                 "summary": art.get('description', ''),
                 "tags": tags,
@@ -556,6 +1051,99 @@ def fetch_devto(limit=5, keyword=None):
     except Exception as e:
         print(f"Dev.to fetch error: {e}", file=sys.stderr)
     return filter_items(items[:limit], keyword)
+
+
+def fetch_devto_react(limit=5, keyword=None):
+    """Dev.to React 专区 RSS - 抓取带 react 标签的文章"""
+    return filter_items(fetch_rss_feed("https://dev.to/feed/tag/react", "Dev.to React", limit * 2)[:limit], keyword)
+
+
+def fetch_react_blog(limit=5, keyword=None):
+    """React 官方博客 RSS"""
+    return filter_items(fetch_rss_feed("https://react.dev/rss.xml", "React Blog", limit * 2)[:limit], keyword)
+
+
+def fetch_openai_blog(limit=5, keyword=None):
+    """OpenAI 官方新闻博客 RSS"""
+    return filter_items(fetch_rss_feed("https://openai.com/news/rss.xml", "OpenAI Blog", limit * 2)[:limit], keyword)
+
+
+def fetch_anthropic_blog(limit=5, keyword=None):
+    """Anthropic 官方新闻博客 RSS（第三方镜像）"""
+    return filter_items(fetch_rss_feed(
+        "https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml",
+        "Anthropic Blog", limit * 2)[:limit], keyword)
+
+
+def fetch_juejin_page_time(url):
+    """Read the article's canonical publication time from its rendered HTML."""
+    if not url or not is_safe_http_url(url):
+        return ""
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=8)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        time_tag = soup.select_one('time.time[datetime], time[datetime]')
+        if not time_tag:
+            return ""
+        value = time_tag.get('datetime', '').strip()
+        return value if parse_item_datetime({'time': value}) else ""
+    except (OSError, ValueError, requests.RequestException):
+        return ""
+
+
+def enrich_juejin_page_times(items):
+    """Fill missing ranking timestamps from article pages with bounded concurrency."""
+    missing = [item for item in items if not item.get('time') and item.get('url')]
+    if not missing:
+        return items
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(fetch_juejin_page_time, item['url']): item for item in missing}
+        for future in concurrent.futures.as_completed(futures):
+            item = futures[future]
+            try:
+                page_time = future.result()
+            except Exception:
+                page_time = ""
+            if page_time:
+                item['time'] = page_time
+                item['time_source'] = 'article_page'
+            else:
+                item['time_source'] = 'missing'
+    return items
+
+
+def fetch_juejin(limit=5, keyword=None):
+    """掘金热榜文章 via 官方 API"""
+    items = []
+    try:
+        url = "https://api.juejin.cn/content_api/v1/content/article_rank"
+        params = {"category_id": "1", "type": "hot", "limit": limit * 2}
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        for art in data.get("data", []):
+            content = art.get("content", {})
+            counter = art.get("content_counter", {})
+            author = art.get("author", {})
+            api_time = content.get('ctime') or content.get('mtime') or ""
+            items.append({
+                "source": "掘金热榜",
+                "title": content.get("title", ""),
+                "url": f"https://juejin.cn/post/{content.get('content_id', '')}",
+                "author": author.get("name", ""),
+                "hot_rank": counter.get('hot_rank', 0),
+                "view": counter.get('view', 0),
+                "like": counter.get('like', 0),
+                "comment": counter.get('comment', 0),
+                "collect": counter.get('collect', 0),
+                "share": counter.get('share', 0),
+                "heat": counter.get('hot_rank', 0),  # 主指标用 hot_rank
+                "time": api_time if api_time else "",
+                "time_source": 'api' if api_time else 'missing',
+            })
+    except Exception as e:
+        print(f"Juejin fetch error: {e}", file=sys.stderr)
+    return filter_items(enrich_juejin_page_times(items[:limit]), keyword)
 
 
 def fetch_sspai(limit=5, keyword=None):
@@ -604,7 +1192,7 @@ def fetch_aihot(limit=15, keyword=None):
     """AIHOT (aihot.virxact.com) AI 精选聚合，跨源中文编辑稿，日更 ~50 条。
     默认拉最近 24h 内容（日更源，50 条/天，取最多 limit 条）。"""
     raw = fetch_rss_feed("https://aihot.virxact.com/rss", "AIHOT", max(limit * 4, 50))
-    items = filter_by_hours(raw, hours=24)
+    items = source_time_filter(raw, hours=24)
     return filter_items(items[:limit], keyword)
 
 
@@ -612,7 +1200,7 @@ def fetch_tldr_ai(limit=3, keyword=None):
     """TLDR AI 英文每日 AI 摘要，5-10 主题/期。
     默认拉最近 48h（日刊时间戳为午夜 UTC，48h 确保任意时段都能拿到最新 1-2 期）。"""
     raw = fetch_rss_feed("https://tldr.tech/api/rss/ai", "TLDR AI", limit * 4)
-    items = filter_by_hours(raw, hours=48)
+    items = source_time_filter(raw, hours=48)
     return filter_items(items[:limit], keyword)
 
 
@@ -620,7 +1208,7 @@ def fetch_import_ai(limit=2, keyword=None):
     """Import AI by Jack Clark（前 OpenAI/Anthropic 联创）周更深度评论。
     默认拉最近 7 天（周刊，1 条 = 1 期 = 1 周），通常返回最新 1 期。"""
     raw = fetch_rss_feed("https://importai.substack.com/feed", "Import AI", limit * 4)
-    items = filter_by_hours(raw, hours=168)  # 7 days
+    items = source_time_filter(raw, hours=168)  # 7 days
     return filter_items(items[:limit], keyword)
 
 
@@ -644,7 +1232,7 @@ INTERNATIONAL_NEWS_MAX_AGE_HOURS = 24
 def fetch_recent_rss_feed(url, source_name, limit=10, keyword=None, hours=INTERNATIONAL_NEWS_MAX_AGE_HOURS):
     """Fetch an RSS feed and keep only items from the recent time window."""
     raw = fetch_rss_feed(url, source_name, max(limit * 4, 30))
-    items = filter_by_hours(raw, hours=hours)
+    items = source_time_filter(raw, hours=hours)
     return filter_items(items, keyword)[:limit]
 
 
@@ -662,7 +1250,7 @@ def fetch_reuters(limit=10, keyword=None):
         "Reuters (Google News fallback)",
         max(limit * 4, 30),
     )
-    items = filter_by_hours(items, hours=INTERNATIONAL_NEWS_MAX_AGE_HOURS)
+    items = source_time_filter(items, hours=INTERNATIONAL_NEWS_MAX_AGE_HOURS)
     for item in items:
         title = item.get('title', '')
         if title.endswith(' - Reuters'):
@@ -762,7 +1350,7 @@ def fetch_rss_with_playwright(url, source_name, limit=5):
                         "source": "Ben's Bites",
                         "title": "Ben's Bites (Visit Site)",
                         "url": "https://bensbites.beehiiv.com/",
-                        "time": "Today",
+                "time": "",
                         "summary": "Auto-fetch failed. Please verify on site.",
                     }]
              else:
@@ -770,12 +1358,17 @@ def fetch_rss_with_playwright(url, source_name, limit=5):
                         "source": "Ben's Bites",
                         "title": "Ben's Bites (Check Site)",
                         "url": "https://bensbites.beehiiv.com/",
-                        "time": "Today",
+                "time": "",
                         "summary": "Fetch process failed.",
                     }]
 
-        # User generic Playwright script for all OTHER protected feeds
-        
+        # Use the generic Playwright script for all other protected feeds.
+        script_path = os.path.join(
+            os.path.dirname(__file__), "fetch_generic_playwright.py"
+        )
+        cmd = [sys.executable, script_path, url]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+
         if result.returncode == 0:
             from rss_parser import parse_rss_content
             # Result stdout should be the HTML/XML content
@@ -857,6 +1450,10 @@ def main():
     parser = argparse.ArgumentParser()
     sources_map = {
         'hackernews': fetch_hackernews, 'weibo': fetch_weibo, 'github': fetch_github,
+        'weibo_search': fetch_weibo_search,
+        'douyin': fetch_douyin,
+        'bilibili': fetch_bilibili,
+        'wechat': fetch_wechat,
         '36kr': fetch_36kr, 'v2ex': fetch_v2ex, 'tencent': fetch_tencent,
         'wallstreetcn': fetch_wallstreetcn, 'producthunt': fetch_producthunt,
         # Aggregates
@@ -868,6 +1465,11 @@ def main():
         # Extended (v2): tech community / academic / Chinese deep-content / user OPML
         'lobsters': fetch_lobsters,
         'devto': fetch_devto,
+        'devto_react': fetch_devto_react,
+        'react_blog': fetch_react_blog,
+        'openai': fetch_openai_blog,
+        'anthropic': fetch_anthropic_blog,
+        'juejin': fetch_juejin,
         'sspai': fetch_sspai,
         'infoq_cn': fetch_infoq_cn,
         'arxiv': fetch_arxiv,
@@ -911,12 +1513,19 @@ def main():
     parser.add_argument('--limit', type=int, default=10, help='Limit per source. Default 10')
     parser.add_argument('--keyword', help='Comma-sep keyword filter')
     parser.add_argument('--deep', action='store_true', help='Download article content for detailed summarization')
+    parser.add_argument('--hours', type=int, default=72, help='Only keep items published within the last N hours (default: 72)')
+    parser.add_argument('--skip-time-filter', action='store_true',
+                        help='Preserve raw time candidates for downstream AI interpretation')
     parser.add_argument('--save', action='store_true', help='Save output to reports directory (JSON + MD)')
     parser.add_argument('--no-save', action='store_true', dest='no_save', help='Skip saving JSON files to disk (only output to stdout)')
     parser.add_argument('--outdir', help='Custom output directory for saved reports')
     parser.add_argument('--list-sources', action='store_true', help='List all available source keys')
+    parser.add_argument('--stats-file', help='Write per-source fetch and time-filter statistics as JSON')
     
     args = parser.parse_args()
+
+    global AI_TIME_INTERPRETATION_MODE
+    AI_TIME_INTERPRETATION_MODE = args.skip_time_filter
 
     if args.list_sources:
         print(f"{'Source Key':<20} | {'Source Name'}")
@@ -927,24 +1536,44 @@ def main():
     
     to_run = []
     if args.source == 'all':
-        to_run = list(sources_map.values())
+        to_run = [(key, func) for key, func in sources_map.items()]
     else:
         requested_sources = [s.strip() for s in args.source.split(',')]
         for s in requested_sources:
-            if s in sources_map: to_run.append(sources_map[s])
+            if s in sources_map:
+                to_run.append((s, sources_map[s]))
             
     results = []
     
+    source_stats = {}
+
     def run_fetchers(fetchers, limit, kw):
         res = []
-        for func in fetchers:
+        for source_key, func in fetchers:
+            entry = source_stats.setdefault(source_key, {'requested': 0, 'returned': 0, 'errors': []})
+            entry['requested'] += limit
             try:
-                res.extend(func(limit, kw))
-            except: pass
+                fetched = func(limit, kw)
+                entry['returned'] += len(fetched)
+                for item in fetched:
+                    time_source = item.get('time_source')
+                    if time_source:
+                        sources = entry.setdefault('time_sources', {})
+                        sources[time_source] = sources.get(time_source, 0) + 1
+                social_filtered = consume_filter_stats()
+                if social_filtered:
+                    entry['filtered'] = social_filtered
+                res.extend(fetched)
+            except Exception as error:
+                entry['errors'].append(str(error)[:300])
+                print(f"Fetcher {getattr(func, '__name__', repr(func))} failed: {error}", file=sys.stderr)
         return res
 
     # Primary Fetch
     results = run_fetchers(to_run, args.limit, args.keyword)
+    time_stats = {}
+    if not args.skip_time_filter:
+        results = filter_by_hours(results, hours=args.hours, stats=time_stats)
         
     # Smart Fill Logic (Only if keyword is used and results are sparse)
     MIN_ITEMS = 5
@@ -955,6 +1584,8 @@ def main():
         # We fetch enough to potentially fill the gap, limit=MIN_ITEMS is a safe bet for each source
         fill_limit = MIN_ITEMS 
         fill_results = run_fetchers(to_run, limit=fill_limit, kw=None)
+        if not args.skip_time_filter:
+            fill_results = filter_by_hours(fill_results, hours=args.hours, stats=time_stats)
         
         # Deduplicate and Append
         existing_urls = {item.get('url') for item in results}
@@ -978,6 +1609,24 @@ def main():
                 results.append(item)
                 existing_urls.add(u)
                 existing_titles.add(t)
+
+    # Apply the window again after smart fill so no fallback can reintroduce stale items.
+    if not args.skip_time_filter:
+        results = filter_by_hours(results, hours=args.hours, stats=time_stats)
+
+    if args.stats_file:
+        try:
+            with open(args.stats_file, 'w', encoding='utf-8') as handle:
+                json.dump({
+                    'source': args.source,
+                    'hours': args.hours,
+                    'time_filter_skipped': args.skip_time_filter,
+                    'fetchers': source_stats,
+                    'time_filter': time_stats,
+                    'final_count': len(results),
+                }, handle, ensure_ascii=False, indent=2)
+        except OSError as error:
+            print(f"Stats file write failed: {error}", file=sys.stderr)
 
     if args.deep and results:
         sys.stderr.write(f"Deep fetching content for {len(results)} items...\n")

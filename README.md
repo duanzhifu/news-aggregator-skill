@@ -7,6 +7,8 @@
 
 **全网科技/金融/AI深度新闻聚合助手，专为智能 Agent 打造的高效信息引擎。**
 
+部署、配置、Obsidian 导出和定时任务说明见 [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)。
+
 ---
 
 ## ✨ 核心特性
@@ -15,7 +17,7 @@
 - **🔧 OPML 自定义订阅**：内置 44+ 源覆盖不全时，在 `user_sources.opml` 里新增一条带 `xmlUrl` 的 RSS/Atom 订阅项即可接入，兼容 Feedly / Inoreader 等 RSS 阅读器导出格式。未内置的媒体、机构博客和个人订阅源（如 NYT 中文）都可走这条路，详见 `user_sources.opml.example`。
 - **🚀 完美支持 OpenClaw**：专为原生大模型 Agent 平台（如 OpenClaw、Code Agent）深度定制，即插即用，沉浸式体验信息流。
 - **🆓 开箱即用 (Zero-Config)**：纯净抓取，**无需配置任何第三方 API Key**，告别繁琐的环境变量和额度焦虑。
-- **🧠 AI 智能深度阅读 (Deep Fetch)**：智能穿透防爬虫机制（内置 Playwright 绕过 Cloudflare），抓取完整正文内容交给大模型过滤、提炼与总结。
+- **🧠 AI 抓取与轻量阅读**：AI 先依据来源列表、原始时间和摘要决定值得打开的文章，再读取受限 DOM 文本快照，一次完成翻译、总结与质量确认；仅在显式使用 `--deep` 时抓取入选项完整正文。
 - **📰 场景化早报 (Daily Briefings)**：内置多套场景预设（综合早报、财经早报、科技早报、吃瓜早报、AI深度日报），一键生成杂志级排版的 Markdown 中文报告。
 - **🪄 魔法交互菜单**：支持通过专属口令唤醒全局交互式菜单，告别繁琐长难句，只需输入序号即可指哪打哪。
 
@@ -127,6 +129,25 @@ playwright install chromium
 ---
 
 ## 💡 开发与扩展
+
+### 社交平台技术内容
+
+支持 `douyin`、`bilibili`、`weibo_search` 和 `wechat`。关键词默认读取
+`config/social_sources.json`，也可以通过 `--keyword` 临时指定：
+
+```bash
+python scripts/fetch_news.py --source douyin,bilibili,weibo_search,wechat --keyword "前端,AI,软件工程" --limit 5
+```
+
+适配器优先使用 `SOCIAL_API_URL_<PLATFORM>` 配置的 JSON API，失败后使用 Playwright
+访问公开搜索页。可运行 `python scripts/setup_social_login.py --browser edge --platform all`，
+在专用 Edge 窗口中登录抖音、B站和微博；会话默认保存在仓库外的
+`D:\news-aggregator-browser-profile`，不会读取日常 Edge Profile。
+程序不保存明文密码、不下载视频，也不会自动处理验证码。微信公众号继续使用公开文章搜索。
+
+抖音、B站、微博关键词和公众号已纳入常规 Obsidian 日报的默认来源；社交来源同样使用每源 15 条上限。
+
+Obsidian 日报默认使用 `--evidence-mode snapshot`。不同平台的发布时间、更新时间、仓库推送时间和榜单时间由 AI 结合原始字段解释，并在笔记中保存时间类型、置信度与证据；程序不再用统一小时规则提前删除这些候选。
 
 欢迎提交 PR 为框架接入新的全球优质信源。我们期望共建一个**最纯净、最高效、抗干扰**的防降智信息获取舱。
 

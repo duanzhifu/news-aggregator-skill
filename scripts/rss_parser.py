@@ -2,13 +2,9 @@
 import sys
 import requests
 from bs4 import BeautifulSoup
-import urllib3
 import re
 import time
 from datetime import datetime
-
-# Suppress insecure request warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def clean_text(text):
     if not text: return ""
@@ -70,20 +66,59 @@ def parse_rss_content(content, source_name, limit=5):
             _summary_text = soup_desc.get_text(separator=' ', strip=True)
             clean_summary = (_summary_text[:300] + "...") if len(_summary_text) > 300 else _summary_text
             
-            # --- Heat ---
-            heat = ""
+            # --- Heat / Engagement Metrics ---
+            # 尝试多种字段名（不同平台使用的 RSS 扩展不一样）
+            metrics = {}
+            
+            # 评论数（slash:comments 是 RSS 2.0 标准）
             comments = entry.find('slash:comments')
             if comments:
-                heat = f"{comments.get_text(strip=True)} comments"
+                metrics['comments'] = clean_text(comments.get_text())
             
-            items.append({
+            # 通用命名空间
+            for tag_name in [
+                'likes', 'like', 'thumbsup', 'thumbs', 'upvotes', 'upvote',
+                'votes', 'score', 'points', 'stars', 'bookmarks', 'favorites',
+                'views', 'hits', 'downloads', 'reactions', 'shares', 'reads',
+                'replies', 'responses', 'claps', 'hearts', 'saves',
+            ]:
+                el = entry.find(tag_name)
+                if el:
+                    metrics[tag_name] = clean_text(el.get_text())
+            
+            # 第三方命名空间（Medium 用 claps、YouTube 也有 likes 等）
+            for prefix in ['a10:', 'media:', 'yt:', 'thread:', 'itunes:', 'dc:']:
+                for tag_name in ['likes', 'views', 'comments', 'shares', 'rating']:
+                    el = entry.find(f'{prefix}{tag_name}')
+                    if el:
+                        metrics[tag_name] = clean_text(el.get_text())
+            
+            # 拼接 heat 字符串（保持向后兼容）
+            heat_parts = []
+            if metrics.get('points'):
+                heat_parts.append(f"{metrics['points']} points")
+            elif metrics.get('score'):
+                heat_parts.append(f"{metrics['score']} score")
+            if metrics.get('comments'):
+                heat_parts.append(f"{metrics['comments']} comments")
+            elif metrics.get('replies'):
+                heat_parts.append(f"{metrics['replies']} replies")
+            heat = ', '.join(heat_parts) if heat_parts else ""
+            
+            item = {
                 "source": source_name,
                 "title": title,
                 "url": link,
                 "time": time_str,
                 "heat": heat,
                 "summary": clean_summary
-            })
+            }
+            # 附加所有指标（None / 0 不会进字典）
+            for k, v in metrics.items():
+                if v:
+                    item[f'metric_{k}'] = v
+            
+            items.append(item)
             if len(items) >= limit: break
             
         return items
@@ -105,7 +140,7 @@ def fetch_rss_feed(url, source_name, limit=5):
     last_error = None
     for attempt in range(3):
         try:
-            response = requests.get(url, headers=headers, timeout=15, verify=False)
+            response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
             response.encoding = response.apparent_encoding or 'utf-8'
             return parse_rss_content(response.content, source_name, limit)

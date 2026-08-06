@@ -58,12 +58,12 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 30 | 🌅 综合早报 (General) | `daily_briefing.py --profile general --no-save` |
-| 31 | 💰 财经早报 (Finance) | `daily_briefing.py --profile finance --no-save` |
-| 32 | 🤖 科技早报 (Tech) | `daily_briefing.py --profile tech --no-save` |
-| 33 | 🍉 吃瓜早报 (Social) | `daily_briefing.py --profile social --no-save` |
-| 34 | 🧠 AI 深度日报 (AI Daily) | `daily_briefing.py --profile ai_daily --no-save` |
-| 35 | 📚 深度阅读清单 | `daily_briefing.py --profile reading_list --no-save` |
+| 30 | 🌅 默认早报 | `push_to_obsidian.py --limit 15 --vault <Vault>` |
+| 31 | 💰 财经早报 | `push_to_obsidian.py --source wallstreetcn,36kr,tencent --limit 15 --vault <Vault>` |
+| 32 | 🤖 科技早报 | `push_to_obsidian.py --source hackernews,github,producthunt --limit 15 --vault <Vault>` |
+| 33 | 🍉 社区热点 | `push_to_obsidian.py --source weibo,v2ex,tencent --limit 15 --vault <Vault>` |
+| 34 | 🧠 AI 深度日报 | `push_to_obsidian.py --source aihot,openai,anthropic,arxiv --limit 15 --deep --vault <Vault>` |
+| 35 | 📚 深度阅读清单 | `fetch_news.py --source essays,podcasts --limit 15 --deep --no-save` |
 
 ---
 

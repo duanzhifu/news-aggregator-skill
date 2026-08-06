@@ -1,0 +1,19 @@
+{
+  "keywords": {
+    "frontend": ["前端", "React", "Vue", "TypeScript", "浏览器"],
+    "ai": ["人工智能", "大模型", "LLM", "Agent", "RAG", "AI"],
+    "engineering": ["软件工程", "架构", "DevOps", "云原生", "开发者工具"]
+  },
+  "accounts": {
+    "douyin": [],
+    "bilibili": [],
+    "weibo": [],
+    "wechat": []
+  },
+  "search_urls": {
+    "douyin": "https://www.douyin.com/search/{query}",
+    "bilibili": "https://search.bilibili.com/all?keyword={query}",
+    "weibo": "https://s.weibo.com/weibo?q={query}",
+    "wechat": "https://cn.bing.com/search?q=site%3Amp.weixin.qq.com%2Fs+{query}"
+  }
+}

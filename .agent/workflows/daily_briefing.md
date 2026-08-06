@@ -1,19 +1,15 @@
 ---
-description: Generate comprehensive daily briefing reports
+description: Generate and publish an Obsidian daily briefing
 ---
 
-1. Execute the daily briefing script for the specified profile (general, finance, tech, social, ai_daily, reading_list):
+1. Run the current AI-selection and snapshot publishing pipeline for the requested sources:
    // turbo
-   `python3 scripts/daily_briefing.py --profile {{profile}}`
+   ```powershell
+   & "C:\Users\86139\AppData\Local\Programs\Python\Python312\python.exe" scripts\push_to_obsidian.py --source {{source_keys}} --limit {{limit}} --evidence-mode snapshot --vault "{{vault_path}}" --profile {{profile}}
+   ```
 
-2. Read the generated JSON file from the default output directory `reports/YYYY-MM-DD`.
+2. Read the generated notes in `{{vault_path}}/自动获取信息/YYYY-MM-DD/`.
 
-3. Read the relevant instruction file in `instructions/` (e.g., `briefing_general.md`).
+3. Confirm that `今日总结.md` was regenerated from every article note stored for that date.
 
-4. Generate the final Markdown report as per SKILL.md:
-   - Translate content to Simplified Chinese.
-   - Provide Deep Dive insights.
-   - Format using the strict template.
-   - Save to `reports/YYYY-MM-DD/{{profile}}_briefing_report.md`.
-
-5. Notify the user of completion.
+4. Report fetched, AI-selected, AI-rejected, failed, deduplicated and newly written counts, plus the path to `今日总结.md`.

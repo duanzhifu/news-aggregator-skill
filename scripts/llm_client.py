@@ -1,0 +1,162 @@
+"""读取 Codex CLI 的认证信息，调用 OpenAI Responses API 进行翻译和总结。"""
+import json
+import os
+import urllib.request
+import urllib.error
+import re
+
+
+def _load_openai_api_key():
+    """从 Codex CLI 的 auth.json 或环境变量读取 API Key。"""
+    env_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('CODEX_API_KEY')
+    if env_key:
+        return env_key
+
+    codex_home = os.path.expanduser('~/.codex')
+    auth_path = os.path.join(codex_home, 'auth.json')
+    if os.path.exists(auth_path):
+        with open(auth_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        key = data.get('OPENAI_API_KEY') or data.get('api_key') or data.get('CODEX_API_KEY')
+        if key:
+            return key
+
+    raise RuntimeError(
+        "未找到 OpenAI API Key。请设置 OPENAI_API_KEY 环境变量，或运行 `codex login` 登录。"
+    )
+
+
+def _load_api_base():
+    """读取 Codex 配置中的 API base URL（支持第三方中转如 timicc.com）。"""
+    codex_home = os.path.expanduser('~/.codex')
+    config_path = os.path.join(codex_home, 'config.toml')
+    if os.path.exists(config_path):
+        try:
+            import tomllib
+            with open(config_path, 'rb') as f:
+                config = tomllib.load(f)
+            # 优先读取 model_providers.OpenAI.base_url
+            providers = config.get('model_providers', {})
+            openai_provider = providers.get('OpenAI', {})
+            base_url = openai_provider.get('base_url')
+            if base_url:
+                return base_url.rstrip('/')
+            # 兼容旧配置
+            base_url = config.get('api_base_url')
+            if base_url:
+                return base_url.rstrip('/')
+        except Exception:
+            pass
+    return 'https://api.openai.com'
+
+
+def _load_default_model():
+    """读取 Codex 默认模型。"""
+    codex_home = os.path.expanduser('~/.codex')
+    config_path = os.path.join(codex_home, 'config.toml')
+    if os.path.exists(config_path):
+        try:
+            import tomllib
+            with open(config_path, 'rb') as f:
+                config = tomllib.load(f)
+            return config.get('model')
+        except Exception:
+            pass
+    return None
+
+
+API_KEY = None
+API_BASE = None
+DEFAULT_MODEL = None
+
+
+def _ensure_auth():
+    global API_KEY, API_BASE, DEFAULT_MODEL
+    if API_KEY is None:
+        API_KEY = _load_openai_api_key()
+        API_BASE = _load_api_base()
+        DEFAULT_MODEL = _load_default_model()
+
+
+def call_llm(messages, model=None, temperature=0.3, max_tokens=4000, json_mode=False):
+    """
+    调用 OpenAI Responses API。
+
+    Args:
+        messages: list of {"role": "system"/"user", "content": str}
+        model: 模型名，默认从 Codex 配置读取
+        temperature: 0-1
+        max_tokens: 最大输出 token
+        json_mode: 是否强制输出 JSON
+
+    Returns:
+        str: LLM 的文本输出
+    """
+    _ensure_auth()
+    model = model or os.environ.get('LLM_MODEL') or DEFAULT_MODEL or 'gpt-4.1-mini'
+
+    # Responses API 的 input 格式
+    input_messages = []
+    for m in messages:
+        input_messages.append({
+            "role": m["role"],
+            "content": [{"type": "input_text", "text": m["content"]}]
+        })
+
+    payload = {
+        "model": model,
+        "input": input_messages,
+        "temperature": temperature,
+        "max_output_tokens": max_tokens,
+    }
+
+    if json_mode:
+        payload["text"] = {"format": {"type": "json_object"}}
+
+    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    req = urllib.request.Request(
+        f"{API_BASE}/responses",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        method="POST",
+    )
+
+    try:
+        try:
+            timeout = max(1.0, float(os.environ.get("LLM_API_TIMEOUT_SECONDS", "120")))
+        except ValueError:
+            timeout = 120.0
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            res = json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        raise RuntimeError(f"LLM API HTTP {e.code}: {body[:500]}")
+
+    if res.get('error'):
+        raise RuntimeError(f"LLM API Error: {res['error']}")
+
+    # 从 Responses API 输出中提取文本
+    try:
+        for output in res.get('output', []):
+            if output.get('type') == 'message':
+                for content in output.get('content', []):
+                    if content.get('type') == 'output_text':
+                        return content['text'].strip()
+        # 兜底
+        return res.get('output_text', '').strip()
+    except Exception as e:
+        raise RuntimeError(f"解析 LLM 响应失败: {e}, response={res}")
+
+
+def extract_json_block(text):
+    """从 LLM 输出中提取 JSON 代码块或原始 JSON。"""
+    match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r'```\s*(.*?)\s*```', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()

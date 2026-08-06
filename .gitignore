@@ -37,11 +37,15 @@ Thumbs.db
 # Temporary files from skill execution
 *_stderr.log
 *.log
+logs/
+repairs/
 *.png
 *_debug.txt
 # Generated Data and Reports
-*.json
 reports/
+_tmp_*.json
+scripts/temp_raw.json
+scripts/feishu_tokens.json
 test_results/
 
 # Playwright / Testing
@@ -61,6 +65,11 @@ test-results/
 
 # User-specific OPML feeds (keep the .example committed)
 user_sources.opml
+
+# Local social-platform configuration and browser sessions
+config/social_sources.local.json
+browser-profile/
+.cache/
 
 # Local agent helper links. Keep .agent/workflows committed.
 .agent/skills/

@@ -1,0 +1,32 @@
+# 仓库指南
+
+## 项目结构与模块组织
+
+本仓库是一个 Python 3.10+ 新闻聚合技能。运行时代码位于 `scripts/`：`fetch_news.py` 负责协调内置信息源，`fetch_user_feeds.py` 处理 OPML 订阅，`rss_parser.py` 负责订阅源解析，其余抓取器支持专用网站和基于 Playwright 的提取。提示词和简报行为由 `SKILL.md`、`translate-summarize-SKILL.md` 及 `instructions/` 定义。输出格式位于 `templates/` 和 `templates.md`；生成的报告放在 `reports/`，该目录已被忽略。`.agent/workflows/` 包含代理工作流定义。
+
+## 构建、测试与开发命令
+
+本项目没有编译步骤或构建系统。使用以下命令安装依赖：
+
+```bash
+python -m pip install -r requirements.txt
+playwright install chromium
+```
+
+使用 `python scripts/fetch_news.py --source hackernews --limit 10` 执行常规信息源抓取。根据 `user_sources.opml.example` 创建 `user_sources.opml` 后，可使用 `python scripts/fetch_news.py --source user --limit 15` 测试自定义订阅。要执行端到端的 Obsidian 导出，先配置仓库路径，再运行 `python scripts/push_to_obsidian.py --source ai_newsletters --limit 10 --deep`。Windows 下，`scripts/run_daily.ps1` 是定时任务入口；运行前必须检查其中硬编码的仓库、Python 和 Vault 路径。
+
+## 编码风格与命名约定
+
+使用 4 个空格缩进和具有描述性的 `snake_case` 命名；导入时先写标准库，再写第三方库并分组。保持信息源适配器简洁，并返回 `fetch_news.py` 使用的现有标准化条目结构。保留 UTF-8 文本和已有 CLI 参数。项目未配置格式化工具或代码检查器；提交前使用 `python -m py_compile scripts/<file>.py` 检查修改过的 Python 文件。
+
+## 测试规范
+
+当前未配置自动化测试框架或覆盖率门槛。使用受限的在线抓取（`--limit 1` 或 `--limit 3`）验证改动，并检查生成的 JSON/Markdown 输出。修改解析器时，应尽可能同时测试 RSS 和 Atom 输入。不要提交凭据、`user_sources.opml`、生成的报告、日志或 Playwright 产物；这些路径已由 `.gitignore` 覆盖。
+
+## 提交与拉取请求规范
+
+使用简短、祈使语气的提交信息，并采用既有前缀：`feat:`、`fix:`、`chore:` 或 `docs:`，例如 `fix: handle empty RSS titles`。无关改动应分开提交。拉取请求应说明受影响的信息源或工作流，列出验证命令，注明新增的依赖或配置要求；若格式或报告行为发生变化，还应提供具有代表性的输出。示例和截图中不得包含订阅源 URL 或密钥。
+
+## 安全与配置提示
+
+将抓取到的文章内容和订阅源 URL 视为不可信输入。将 `OPENAI_API_KEY` 等 API 密钥保存在环境变量中，绝不写入受 Git 跟踪的文件。执行深度抓取或本地发布到 Obsidian 前，检查外部 URL 和输出路径。
