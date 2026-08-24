@@ -13,10 +13,9 @@ from scripts import setup_social_login
 class SocialPlatformTests(unittest.TestCase):
     def test_login_platform_selection(self):
         self.assertEqual(
-            ["douyin", "bilibili", "weibo"],
+            ["douyin", "bilibili"],
             setup_social_login.selected_platforms("all"),
         )
-        self.assertEqual(["weibo"], setup_social_login.selected_platforms("weibo"))
 
     def test_login_browser_selection(self):
         self.assertEqual("msedge", setup_social_login.browser_channel("edge"))
@@ -46,6 +45,121 @@ class SocialPlatformTests(unittest.TestCase):
                     "NEWS_AGGREGATOR_BROWSER_PROFILE": profile,
                 }),
             )
+
+    def test_douyin_search_url_normalizes_modal_id(self):
+        url = "https://www.douyin.com/search/%E5%89%8D%E7%AB%AF?modal_id=7647330309549100340"
+        self.assertEqual(
+            "https://www.douyin.com/video/7647330309549100340",
+            fetch_social_browser.normalize_url("douyin", url),
+        )
+
+    def test_douyin_search_url_requires_modal_id(self):
+        url = "https://www.douyin.com/search/frontend"
+        self.assertFalse(fetch_social_browser.allowed_url("douyin", url))
+        self.assertEqual(url, fetch_social_browser.normalize_url("douyin", url))
+
+    def test_douyin_video_id_attribute_becomes_detail_url(self):
+        class Anchor:
+            def inner_text(self):
+                return "AI 工程实践视频"
+
+            def get_attribute(self, name):
+                return {"data-aweme-id": "7647330309549100340"}.get(name)
+
+            def locator(self, selector):
+                raise RuntimeError("context is not needed for this test")
+
+        class Anchors:
+            def all(self):
+                return [Anchor()]
+
+        class Page:
+            def locator(self, selector):
+                return Anchors()
+
+        result = fetch_social_browser.extract_items(
+            Page(), "https://www.douyin.com/search/AI", "douyin", 5
+        )
+        self.assertEqual("https://www.douyin.com/video/7647330309549100340", result[0]["url"])
+
+    def test_douyin_card_class_extracts_child_video_link(self):
+        class Link:
+            def inner_text(self):
+                return ""
+
+            def get_attribute(self, name):
+                return "/video/7647330309549100340"
+
+        class Card:
+            def inner_text(self):
+                return "AI 工程实践视频"
+
+            def get_attribute(self, name):
+                return None
+
+            def locator(self, selector):
+                return type("Links", (), {"all": lambda self: [Link()]})()
+
+        class Cards:
+            def all(self):
+                return [Card()]
+
+        class Page:
+            def locator(self, selector):
+                self.selector = selector
+                return Cards()
+
+        result = fetch_social_browser.extract_items(
+            Page(), "https://www.douyin.com/search/AI", "douyin", 5
+        )
+        self.assertEqual("https://www.douyin.com/video/7647330309549100340", result[0]["url"])
+
+    def test_douyin_direct_video_url_is_normalized(self):
+        url = "https://www.douyin.com/video/1234567890123456789?enter_from=search"
+        self.assertEqual(
+            "https://www.douyin.com/video/1234567890123456789",
+            fetch_social_browser.normalize_url("douyin", url),
+        )
+
+    def test_douyin_normalization_is_platform_specific(self):
+        url = "https://www.douyin.com/search/frontend?modal_id=123"
+        self.assertEqual(url, fetch_social_browser.normalize_url("bilibili", url))
+
+    def test_douyin_search_results_dedupe_by_normalized_video_url(self):
+        class Anchor:
+            def __init__(self, title, href):
+                self.title = title
+                self.href = href
+
+            def inner_text(self):
+                return self.title
+
+            def get_attribute(self, name):
+                return self.href if name == "href" else None
+
+            def locator(self, selector):
+                raise RuntimeError("context is not needed for this test")
+
+        class Anchors:
+            def __init__(self, anchors):
+                self.anchors = anchors
+
+            def all(self):
+                return self.anchors
+
+        class Page:
+            def locator(self, selector):
+                return Anchors([
+                    Anchor("前端技巧视频", "https://www.douyin.com/search/前端?modal_id=123"),
+                    Anchor("frontend tips", "https://www.douyin.com/search/frontend?modal_id=123"),
+                ])
+
+        result = fetch_social_browser.extract_items(
+            Page(), "https://www.douyin.com/search/前端", "douyin", 5
+        )
+        self.assertEqual(1, len(result))
+        self.assertEqual("https://www.douyin.com/video/123", result[0]["url"])
+        self.assertIn("original_url", result[0])
 
     def test_normalize_rows_keeps_matching_metadata(self):
         rows = [{"title": "React 性能优化", "url": "https://www.bilibili.com/video/BV000", "author": "frontend"}]
@@ -79,34 +193,6 @@ class SocialPlatformTests(unittest.TestCase):
         result = social_platforms.normalize_rows(rows, "Bilibili", "AI", 5)
         self.assertEqual("AI 工程实践公开分享", result[0]["title"])
 
-    def test_wechat_keeps_only_article_urls(self):
-        rows = [
-            {"title": "官网前端文章", "url": "https://example.com/frontend"},
-            {"title": "微信公众号前端文章", "url": "https://mp.weixin.qq.com/s/abc123"},
-        ]
-        result = social_platforms.normalize_rows(rows, "WeChat Official Account", "前端", 5)
-        self.assertEqual(1, len(result))
-        self.assertEqual("https://mp.weixin.qq.com/s/abc123", result[0]["url"])
-
-    def test_social_promotion_is_rejected(self):
-        rows = [{
-            "title": "百度百科前端开发推广课程",
-            "url": "https://mp.weixin.qq.com/s/promo123",
-        }]
-        self.assertEqual([], social_platforms.normalize_rows(rows, "WeChat Official Account", "前端", 5))
-
-    def test_deep_content_promotion_is_rejected(self):
-        item = {
-            "source": "WeChat Official Account",
-            "url": "https://mp.weixin.qq.com/s/article123",
-            "title": "前端工程实践",
-            "content": "本文为商业推广，报名训练营请加微信。",
-        }
-        self.assertEqual(
-            "明确推广或销售内容",
-            social_platforms.disallowed_reason(item["source"], item=item),
-        )
-
     def test_browser_search_uses_bounded_subprocess(self):
         completed = subprocess.CompletedProcess([], 0, json.dumps([{"title": "AI", "url": "https://example.test/a"}]), "")
         with patch.object(social_platforms.subprocess, "run", return_value=completed) as run:
@@ -114,29 +200,35 @@ class SocialPlatformTests(unittest.TestCase):
         self.assertEqual("AI", result[0]["title"])
         self.assertIn("--limit", run.call_args.args[0])
 
+    def test_social_search_uses_all_15_default_keywords(self):
+        keywords = [f"keyword-{index}" for index in range(15)]
+        with patch.object(social_platforms, "configured_keywords", return_value=keywords), \
+                patch.object(social_platforms, "configured_api_search", return_value=[]), \
+                patch.object(
+                    social_platforms,
+                    "browser_search",
+                    side_effect=lambda platform, query, limit: [{
+                        "title": query,
+                        "url": f"https://example.test/{query}",
+                    }],
+                ) as browser:
+            social_platforms.fetch_social("douyin", "Douyin", 1)
+        self.assertEqual(keywords, [call.args[1] for call in browser.call_args_list])
+
+    def test_social_search_respects_explicit_query_limit(self):
+        keywords = [f"keyword-{index}" for index in range(15)]
+        with patch.dict(os.environ, {"SOCIAL_MAX_QUERIES": "5"}), \
+                patch.object(social_platforms, "configured_keywords", return_value=keywords), \
+                patch.object(social_platforms, "configured_api_search", return_value=[]), \
+                patch.object(social_platforms, "browser_search", return_value=[]) as browser:
+            social_platforms.fetch_social("douyin", "Douyin", 1)
+        self.assertEqual(5, browser.call_count)
+
     def test_bilibili_detail_title_accepts_real_title_and_rejects_metrics(self):
         self.assertTrue(fetch_social_browser._is_valid_bilibili_title(
             "【Vue3极简2025版教程】2个半小时快速学会Vue，效率最高，用时最短！"
         ))
         self.assertFalse(fetch_social_browser._is_valid_bilibili_title("259 0 15:12:11"))
-
-    def test_weibo_hot_normalizes_api_response(self):
-        response = unittest.mock.Mock()
-        response.json.return_value = {"data": {"realtime": [{"note": "AI", "num": 100}]}}
-        response.raise_for_status.return_value = None
-        with patch.object(social_platforms.requests, "get", return_value=response):
-            result = social_platforms.fetch_weibo_hot(3, "AI")
-        self.assertEqual("official_api", result[0]["fetch_method"])
-        self.assertEqual("100", result[0]["heat"])
-
-    def test_weibo_search_uses_configured_keywords_without_cli_keyword(self):
-        rows = [{"title": "AI 工程实践", "url": "https://example.test/a"}]
-        with patch.object(social_platforms, "configured_keywords", return_value=["AI"]), patch.object(
-            social_platforms, "configured_api_search", return_value=[]
-        ), patch.object(social_platforms, "browser_search", return_value=rows) as browser:
-            result = social_platforms.fetch_weibo_search(1)
-        self.assertEqual("Weibo Search", result[0]["source"])
-        self.assertEqual("AI", browser.call_args.args[1])
 
 
 if __name__ == "__main__":

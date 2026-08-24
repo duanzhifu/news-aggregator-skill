@@ -121,6 +121,12 @@ class AiFetchPipelineTests(unittest.TestCase):
         self.assertEqual("中文标题", result["title_zh"])
 
     def test_snapshot_processing_combines_translation_and_quality(self):
+        chunk_raw = json.dumps({
+            "chunk_summary": "项目说明了目标和使用方式。",
+            "evidence_points": ["项目提供了明确的使用方式"],
+            "time_evidence": "",
+            "concerns": "",
+        })
         raw = json.dumps({"items": [{
             "title_zh": "中文标题",
             "summary_zh": "快照说明了项目目标和使用方式。",
@@ -135,7 +141,7 @@ class AiFetchPipelineTests(unittest.TestCase):
             "evidence_quality": "good",
             "evidence_points": ["快照说明了项目目标和使用方式"],
         }]})
-        with patch.object(llm_summarize, "call_llm", side_effect=[raw, json.dumps({"Feed": "今日有一条高价值内容。"})]), patch.object(
+        with patch.object(llm_summarize, "call_llm", side_effect=[chunk_raw, raw, json.dumps({"Feed": "今日有一条高价值内容。"})]), patch.object(
             llm_summarize.time, "sleep"
         ):
             result = llm_summarize.process_selected_snapshots([
@@ -145,6 +151,27 @@ class AiFetchPipelineTests(unittest.TestCase):
         self.assertEqual(82, result["items"][0]["quality_score"])
         self.assertEqual("strongly_recommended", result["items"][0]["recommendation_level"])
         self.assertEqual("good", result["items"][0]["evidence_quality"])
+
+    def test_full_text_chunks_preserve_every_character(self):
+        text = "第一段" * 2500 + "\n\n" + "第二段" * 2500
+        chunks = llm_summarize.split_evidence_chunks(text, max_chars=1000)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual(text.replace("\n\n", ""), "".join(chunks).replace("\n\n", ""))
+
+    def test_full_text_processing_requires_every_chunk_before_final_decision(self):
+        item = {"source": "Feed", "title": "A", "evidence_snapshot": "甲" * 6500}
+        finding = json.dumps({"chunk_summary": "分段事实", "evidence_points": ["具体事实"], "time_evidence": "", "concerns": ""})
+        final = json.dumps({"items": [{
+            "title_zh": "中文标题", "summary_zh": "完整文章总结。", "quality_score": 80,
+            "recommendation_level": "optional", "recommendation_reason": "完整内容有价值。",
+            "published_at": "", "time_kind": "unknown", "time_confidence": "unknown",
+            "time_evidence": "", "rejection_kind": "not_applicable",
+            "evidence_quality": "good", "evidence_points": ["具体事实"],
+        }]})
+        with patch.object(llm_summarize, "call_llm", side_effect=[finding, finding, final]):
+            result = llm_summarize._process_full_text_item(item)
+        self.assertEqual(2, result["evidence_chunk_count"])
+        self.assertEqual("optional", result["recommendation_level"])
 
 if __name__ == "__main__":
     unittest.main()

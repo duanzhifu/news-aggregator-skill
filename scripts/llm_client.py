@@ -5,10 +5,50 @@ import urllib.request
 import urllib.error
 import re
 
+_CONFIG_CACHE = None
+
+
+def _load_codex_config():
+    """读取 ~/.codex/config.toml（带缓存），失败时返回空 dict。"""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
+    config = {}
+    codex_home = os.path.expanduser('~/.codex')
+    config_path = os.path.join(codex_home, 'config.toml')
+    if os.path.exists(config_path):
+        try:
+            import tomllib
+            with open(config_path, 'rb') as f:
+                config = tomllib.load(f)
+        except Exception:
+            config = {}
+    _CONFIG_CACHE = config
+    return config
+
+
+def _active_provider(config):
+    """返回当前生效的 provider 名称及其配置块。
+
+    跟随 config.toml 顶层的 model_provider（如 OpenAI、deepseek），
+    让流水线与 Codex 当前使用的模型服务保持一致。
+    """
+    name = config.get('model_provider') or 'OpenAI'
+    providers = config.get('model_providers', {})
+    provider = providers.get(name) or providers.get('OpenAI') or {}
+    return name, provider
+
 
 def _load_openai_api_key():
-    """从 Codex CLI 的 auth.json 或环境变量读取 API Key。"""
-    env_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('CODEX_API_KEY')
+    """从 Codex CLI 的 auth.json 或环境变量读取 API Key。
+
+    优先使用当前 provider 声明的 env_key 环境变量，其次回退到
+    OPENAI_API_KEY / CODEX_API_KEY，最后读取 ~/.codex/auth.json。
+    """
+    _, provider = _active_provider(_load_codex_config())
+    env_key_name = provider.get('env_key')
+    env_key = os.environ.get(env_key_name) if env_key_name else None
+    env_key = env_key or os.environ.get('OPENAI_API_KEY') or os.environ.get('CODEX_API_KEY')
     if env_key:
         return env_key
 
@@ -27,42 +67,26 @@ def _load_openai_api_key():
 
 
 def _load_api_base():
-    """读取 Codex 配置中的 API base URL（支持第三方中转如 timicc.com）。"""
-    codex_home = os.path.expanduser('~/.codex')
-    config_path = os.path.join(codex_home, 'config.toml')
-    if os.path.exists(config_path):
-        try:
-            import tomllib
-            with open(config_path, 'rb') as f:
-                config = tomllib.load(f)
-            # 优先读取 model_providers.OpenAI.base_url
-            providers = config.get('model_providers', {})
-            openai_provider = providers.get('OpenAI', {})
-            base_url = openai_provider.get('base_url')
-            if base_url:
-                return base_url.rstrip('/')
-            # 兼容旧配置
-            base_url = config.get('api_base_url')
-            if base_url:
-                return base_url.rstrip('/')
-        except Exception:
-            pass
+    """读取当前 provider 的 API base URL。
+
+    跟随 config.toml 顶层的 model_provider：使用 OpenAI（含 timicc.com
+    中转）时走 model_providers.OpenAI.base_url；使用 deepseek 时走
+    model_providers.deepseek.base_url（https://api.deepseek.com）。
+    """
+    _, provider = _active_provider(_load_codex_config())
+    base_url = provider.get('base_url')
+    if base_url:
+        return base_url.rstrip('/')
+    # 兼容旧配置
+    base_url = _load_codex_config().get('api_base_url')
+    if base_url:
+        return base_url.rstrip('/')
     return 'https://api.openai.com'
 
 
 def _load_default_model():
     """读取 Codex 默认模型。"""
-    codex_home = os.path.expanduser('~/.codex')
-    config_path = os.path.join(codex_home, 'config.toml')
-    if os.path.exists(config_path):
-        try:
-            import tomllib
-            with open(config_path, 'rb') as f:
-                config = tomllib.load(f)
-            return config.get('model')
-        except Exception:
-            pass
-    return None
+    return _load_codex_config().get('model')
 
 
 API_KEY = None

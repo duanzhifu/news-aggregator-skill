@@ -334,14 +334,108 @@ def select_candidates(items, batch_size=5, topics=None, recency_days=7):
     return results
 
 
+FULL_TEXT_CHUNK_CHARS = 6000
+
+
+def split_evidence_chunks(text, max_chars=FULL_TEXT_CHUNK_CHARS):
+    """Split extracted article text on paragraph boundaries without dropping text."""
+    text = str(text or "").strip()
+    if not text:
+        return []
+    chunks = []
+    current = ""
+    for paragraph in re.split(r"\n\s*\n", text):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        while paragraph:
+            available = max_chars - len(current) - (2 if current else 0)
+            if available <= 0:
+                chunks.append(current)
+                current = ""
+                available = max_chars
+            if len(paragraph) <= available:
+                current = f"{current}\n\n{paragraph}".strip() if current else paragraph
+                paragraph = ""
+                continue
+            cut = paragraph.rfind("\n", 0, available)
+            if cut <= 0:
+                cut = available
+            piece = paragraph[:cut].strip()
+            if current:
+                chunks.append(f"{current}\n\n{piece}".strip())
+                current = ""
+            else:
+                chunks.append(piece)
+            paragraph = paragraph[cut:].strip()
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics=None):
+    """Ask for auditable facts from one complete-article segment."""
+    topics_text = ", ".join(normalize_topics(topics)) or "通用前沿技术"
+    safe_item = sanitize_item_for_llm(item)
+    prompt = f"""你正在逐段审阅一篇完整文章。用户关注主题：{topics_text}。
+这是第 {chunk_number}/{chunk_count} 段。只提取该段明确写出的事实、时间线索、价值信息与风险；不要推断段外内容，也不要在单段内给出整篇推荐结论。
+
+只输出严格合法 JSON：
+{{"chunk_summary":"不超过 250 字的中文事实摘要","evidence_points":["具体事实"],"time_evidence":"本段明确时间证据或空字符串","concerns":"本段的局限、广告或异常，或空字符串"}}
+evidence_points 必须为 1 至 4 条具体事实；没有可验证事实时返回空数组。
+
+来源：{safe_item.get('source', '')}
+原标题：{safe_item.get('title', '')}
+正文第 {chunk_number} 段：
+{sanitize_for_llm(chunk)}"""
+    return [
+        {"role": "system", "content": "你是一位严谨的中文技术新闻编辑。"},
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _parse_full_text_chunk(raw):
+    parsed = json.loads(extract_json_block(raw))
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("chunk_summary"), str):
+        raise ValueError("全文分块处理返回无效")
+    points = parsed.get("evidence_points", [])
+    if not isinstance(points, list):
+        raise ValueError("全文分块处理缺少证据列表")
+    return {
+        "chunk_summary": parsed["chunk_summary"].strip()[:1200],
+        "evidence_points": [str(point).strip() for point in points if str(point).strip()][:4],
+        "time_evidence": str(parsed.get("time_evidence", "")).strip()[:500],
+        "concerns": str(parsed.get("concerns", "")).strip()[:500],
+    }
+
+
+def _process_full_text_chunk(item, chunk, chunk_number, chunk_count, topics):
+    try:
+        raw = call_llm(
+            build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics),
+            temperature=0.1, max_tokens=1200, json_mode=True,
+        )
+        return _parse_full_text_chunk(raw)
+    except Exception as error:
+        _retry_backoff()
+        try:
+            raw = call_llm(
+                build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics),
+                temperature=0.0, max_tokens=1200, json_mode=True,
+            )
+            return _parse_full_text_chunk(raw)
+        except Exception as retry_error:
+            raise RuntimeError(f"第 {chunk_number}/{chunk_count} 段处理失败：{retry_error}") from error
+
+
 def build_snapshot_processing_prompt(items, topics=None, recency_days=7, minimal=False):
-    """Build one request for translation, summary, final quality, and time confirmation."""
+    """Build the final decision from metadata and every article-segment finding."""
     topics_text = ", ".join(normalize_topics(topics)) or "通用前沿技术"
     lines = []
     for idx, raw_item in enumerate(items):
         item = sanitize_item_for_llm(raw_item)
-        evidence = item.get("evidence_snapshot") or item.get("summary") or item.get("description") or ""
-        limit = 1200 if minimal else 4000
+        evidence = item.get("full_text_findings") or item.get("evidence_snapshot") or item.get("summary") or item.get("description") or ""
+        limit = 1200 if minimal else None
         lines.append("\n".join([
             f"[{idx}] Source: {item.get('source', '')}",
             f"Original title: {item.get('title', '')}",
@@ -350,11 +444,11 @@ def build_snapshot_processing_prompt(items, topics=None, recency_days=7, minimal
             f"Preliminary time kind/confidence: {item.get('time_kind', 'unknown')}/{item.get('time_confidence', 'unknown')}",
             f"Snapshot status: {item.get('evidence_status', 'unknown')}",
             f"Snapshot type: {item.get('evidence_method', 'feed_metadata')}",
-            f"Snapshot: {evidence[:limit]}",
+            f"Full article findings: {evidence[:limit] if limit else evidence}",
         ]))
-    prompt = f"""请基于短文本快照完成最终编辑判断。用户关注主题：{topics_text}，近期优先参考窗口为 {recency_days} 天。
-快照不是完整正文，不得补充快照中没有的实现、实验、因果关系或结论。一次性返回自然中文标题、2 至 3 句中文总结、质量判断及时间确认。明显广告、低价值转载、标题党或快照与标题不符时可在最终阶段拒绝。
-发布时间沿用可验证证据；快照提供更明确时间时可修正初步结果。不得把更新时间或仓库推送时间写成首次发布时间，也不得猜测缺失日期。
+    prompt = f"""请基于完整文章所有分段的审阅结论完成最终编辑判断。用户关注主题：{topics_text}，近期优先参考窗口为 {recency_days} 天。
+每一段都已处理；只能使用下方元数据和分段结论中的证据，不得补充没有的实现、实验、因果关系或结论。一次性返回自然中文标题、2 至 3 句中文总结、质量判断及时间确认。明显广告、低价值转载、标题党或全文与标题不符时可在最终阶段拒绝。
+发布时间沿用可验证证据；全文提供更明确时间时可修正初步结果。不得把更新时间或仓库推送时间写成首次发布时间，也不得猜测缺失日期。
 
 只输出严格合法 JSON：
 {{"items":[{{"title_zh":"中文标题","summary_zh":"中文总结","quality_score":73,"recommendation_level":"optional","recommendation_reason":"具体依据","rejection_kind":"not_applicable","evidence_quality":"good","evidence_points":["快照明确说明了项目目标","页面给出了可复用的实现信息"],"published_at":"","time_kind":"published","time_confidence":"high","time_evidence":"具体时间证据"}}]}}
@@ -454,13 +548,40 @@ def _process_snapshot_batch(items, topics=None, recency_days=7, split_depth=0):
             return [_failed_snapshot_processing(items[0], retry_error)]
 
 
+def _process_full_text_item(item, topics=None, recency_days=7):
+    """Process every segment before allowing a final article-level decision."""
+    evidence = item.get("evidence_snapshot") or ""
+    chunks = split_evidence_chunks(evidence)
+    if not chunks:
+        return _process_snapshot_batch([item], topics, recency_days)[0]
+
+    findings = []
+    try:
+        for index, chunk in enumerate(chunks, start=1):
+            print(f"[AI 抓取] 全文分段 {index}/{len(chunks)}...")
+            finding = _process_full_text_chunk(item, chunk, index, len(chunks), topics)
+            lines = [f"[第 {index}/{len(chunks)} 段] {finding['chunk_summary']}"]
+            lines.extend(f"- {point}" for point in finding["evidence_points"])
+            if finding["time_evidence"]:
+                lines.append(f"- 时间线索：{finding['time_evidence']}")
+            if finding["concerns"]:
+                lines.append(f"- 注意：{finding['concerns']}")
+            findings.append("\n".join(lines))
+    except Exception as error:
+        return _failed_snapshot_processing(item, error)
+
+    enriched = dict(item)
+    enriched["full_text_findings"] = "\n\n".join(findings)
+    enriched["evidence_chunk_count"] = len(chunks)
+    return _process_snapshot_batch([enriched], topics, recency_days)[0]
+
+
 def process_selected_snapshots(items, batch_tag, batch_size=3, topics=None, recency_days=7):
-    """Finalize AI-selected snapshot items in small, isolated batches."""
+    """Finalize selected articles only after processing their complete text."""
     results = []
-    for i in range(0, len(items), batch_size):
-        batch = items[i:i + batch_size]
-        print(f"[AI 抓取] 快照处理批次 {i // batch_size + 1}/{(len(items) - 1) // batch_size + 1}，{len(batch)} 条...")
-        results.extend(_process_snapshot_batch(batch, topics, recency_days))
+    for i, item in enumerate(items, start=1):
+        print(f"[AI 抓取] 全文处理文章 {i}/{len(items)}...")
+        results.append(_process_full_text_item(item, topics, recency_days))
         time.sleep(_batch_delay())
     for item in results:
         item["batch_tag"] = batch_tag

@@ -11,7 +11,6 @@ DEFAULT_PROFILE = Path(r"D:\news-aggregator-browser-profile")
 PLATFORM_URLS = {
     "douyin": "https://www.douyin.com/",
     "bilibili": "https://www.bilibili.com/",
-    "weibo": "https://weibo.com/",
 }
 BROWSER_CHANNELS = {"edge": "msedge", "chromium": None}
 
@@ -28,7 +27,7 @@ def browser_channel(browser):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="打开可见浏览器并保存抖音、B站和微博的登录会话。"
+        description="打开可见浏览器并保存抖音和 B 站的登录会话。"
     )
     parser.add_argument(
         "--platform",

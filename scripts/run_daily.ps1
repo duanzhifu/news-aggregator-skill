@@ -68,8 +68,8 @@ try {
     }
     $args = @(
         '-u', $pushScript,
-        '--source', 'juejin,devto,github,openai,douyin,bilibili,weibo_search,wechat',
-        '--limit', '20', '--evidence-mode', 'snapshot', '--vault', $vaultPath
+        '--source', 'juejin,devto,github,openai,bilibili,youtube_tech',
+        '--limit', '15', '--evidence-mode', 'snapshot', '--vault', $vaultPath
     )
     $exitCode = Invoke-PythonUtf8 $args
     Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Export finished with exit code $exitCode."

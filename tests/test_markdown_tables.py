@@ -244,8 +244,35 @@ class MarkdownTableTests(unittest.TestCase):
             }]},
             "2026-08-03",
         )
+        table_lines = [line for line in markdown.splitlines() if line.startswith('|')]
+        self.assertEqual('| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 |', table_lines[0])
+        self.assertTrue(table_lines[2].startswith('| [ ] |'))
+        self.assertEqual(table_lines[0].count('|'), table_lines[1].count('|'))
+        self.assertEqual(table_lines[0].count('|'), table_lines[2].count('|'))
         self.assertIn("推荐等级", markdown)
         self.assertIn("可选阅读", markdown)
+
+    def test_daily_summary_adds_one_unread_checkbox_per_article(self):
+        markdown = build_daily_summary_markdown(
+            {},
+            {"Feed": [
+                {
+                    "title": "First", "title_zh": "第一篇", "url": "https://example.com/first",
+                    "summary_zh": "第一篇总结", "recommendation_level": "optional",
+                },
+                {
+                    "title": "Second", "title_zh": "第二篇", "url": "https://example.com/second",
+                    "summary_zh": "第二篇总结", "recommendation_level": "optional",
+                },
+            ]},
+            "2026-08-03",
+        )
+        table_rows = [line for line in markdown.splitlines() if line.startswith('| [ ] |')]
+        self.assertEqual(2, len(table_rows))
+        self.assertIn('[第一篇](', table_rows[0])
+        self.assertIn('[第二篇](', table_rows[1])
+        self.assertIn('/Feed/', table_rows[0])
+        self.assertIn('/Feed/', table_rows[1])
 
     def test_daily_summary_accepts_list_source_summary(self):
         markdown = build_daily_summary_markdown(

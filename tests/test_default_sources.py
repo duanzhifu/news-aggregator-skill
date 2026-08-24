@@ -8,7 +8,7 @@ class DefaultSourceTests(unittest.TestCase):
         self.assertEqual(
             (
                 "juejin", "devto", "github", "openai",
-                "douyin", "bilibili", "weibo_search", "wechat",
+                "bilibili",
             ),
             DEFAULT_SOURCE_KEYS,
         )

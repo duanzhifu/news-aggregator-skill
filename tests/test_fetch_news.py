@@ -34,13 +34,13 @@ class DecodingRaw:
 
 
 class PlaywrightRssFallbackTests(unittest.TestCase):
-    def test_evidence_fetch_is_bounded_and_extracts_dom_text(self):
+    def test_evidence_fetch_can_use_an_explicit_excerpt_and_extracts_dom_text(self):
         html = b"<html><body><article><h1>Title</h1><p>Useful evidence paragraph.</p></article></body></html>"
         with patch.object(fetch_news, "_fetch_public_url", return_value=html) as request:
             evidence = fetch_news.fetch_url_evidence("https://example.test/a", max_chars=30)
         self.assertLessEqual(len(evidence), 30)
         self.assertIn("Title", evidence)
-        self.assertEqual(384 * 1024, request.call_args.kwargs["max_bytes"])
+        self.assertEqual(5 * 1024 * 1024, request.call_args.kwargs["max_bytes"])
 
     def test_streamed_response_decodes_compressed_content(self):
         html = b"<html><body>decoded text</body></html>"
@@ -92,7 +92,7 @@ class PlaywrightRssFallbackTests(unittest.TestCase):
         ):
             evidence, method = fetch_news._fetch_url_evidence_with_method("https://example.test/a")
         self.assertEqual(browser_text, evidence)
-        self.assertEqual("bounded_browser_text", method)
+        self.assertEqual("full_browser_text", method)
 
     def test_unreadable_snapshot_is_not_sent_downstream(self):
         self.assertFalse(fetch_news._is_readable_text("\x00\x01\ufffd\ufffd" * 20))
@@ -119,11 +119,11 @@ class PlaywrightRssFallbackTests(unittest.TestCase):
         with patch.object(
             fetch_news, "_fetch_url_evidence_with_method", return_value=("Short introduction.", "bounded_browser_text")
         ), patch.object(
-            fetch_news, "_fetch_deep_evidence", return_value=(deep_evidence, "deep_dom_text")
+            fetch_news, "_fetch_deep_evidence", return_value=(deep_evidence, "full_dom_text")
         ):
             fetch_news.enrich_items_with_evidence(items, max_workers=1)
         self.assertEqual(deep_evidence, items[0]["evidence_snapshot"])
-        self.assertEqual("deep_dom_text", items[0]["evidence_method"])
+        self.assertEqual("full_dom_text", items[0]["evidence_method"])
         self.assertEqual("fetched", items[0]["evidence_status"])
 
     def test_short_snapshot_uses_longer_browser_retry(self):
@@ -133,7 +133,7 @@ class PlaywrightRssFallbackTests(unittest.TestCase):
         ) as browser_fetch:
             evidence, method = fetch_news._fetch_deep_evidence("https://example.test/a")
         self.assertEqual(browser_evidence.strip(), evidence)
-        self.assertEqual("deep_browser_text", method)
+        self.assertEqual("full_browser_text", method)
         self.assertEqual(3000, browser_fetch.call_args.kwargs["wait_ms"])
 
     def test_short_snapshot_is_marked_insufficient_when_deep_retry_fails(self):

@@ -4,9 +4,10 @@ import json
 import os
 import re
 import sys
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 
 
 TIME_PATTERN = re.compile(
@@ -67,18 +68,72 @@ def launch_options(channel, headless=True):
 
 
 def allowed_url(platform, url):
-    from urllib.parse import urlsplit
-
     parsed = urlsplit(url)
     host = (parsed.hostname or "").casefold()
     path = parsed.path.casefold()
-    if platform == "wechat":
-        return host == "mp.weixin.qq.com" and (path == "/s" or path.startswith("/s/"))
     if platform == "bilibili":
         return host in {"bilibili.com", "www.bilibili.com", "m.bilibili.com"} and path.startswith("/video/")
     if platform == "douyin":
         return host == "www.douyin.com" and path.startswith("/video/")
     return True
+
+
+def normalize_url(platform, url):
+    """Return the content URL represented by a social search result."""
+    if platform != "douyin":
+        return url
+
+    parsed = urlsplit(url)
+    if not parsed.hostname or parsed.hostname.casefold() != "www.douyin.com":
+        return url
+    if parsed.path.casefold().startswith("/video/"):
+        return f"https://www.douyin.com{parsed.path}"
+    if not parsed.path.casefold().startswith("/search/"):
+        return url
+    modal_id = parse_qs(parsed.query).get("modal_id", [""])[0].strip()
+    if not modal_id:
+        return url
+    return f"https://www.douyin.com/video/{modal_id}"
+
+
+def douyin_video_url(value):
+    """Convert a result link or video-id attribute into a detail URL."""
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        normalized = normalize_url("douyin", value)
+        if allowed_url("douyin", normalized):
+            return normalized
+        if parsed.hostname and parsed.hostname.casefold() == "www.douyin.com":
+            modal_id = parse_qs(parsed.query).get("modal_id", [""])[0].strip()
+            if modal_id.isdigit():
+                return f"https://www.douyin.com/video/{modal_id}"
+        return ""
+    match = re.search(r"(?:^|/)(?:video/)?(\d{8,})(?:[/?#]|$)", value)
+    if match:
+        return f"https://www.douyin.com/video/{match.group(1)}"
+    return ""
+
+
+def _douyin_node_video_url(node, base_url):
+    """Find a video URL on a result card or one of its child links."""
+    attributes = ("href", "data-url", "data-video-id", "data-aweme-id", "data-id", "data-e2e")
+    nodes = [node]
+    try:
+        nodes.extend(node.locator("a").all()[:8])
+    except Exception:
+        pass
+    for candidate_node in nodes:
+        for attribute in attributes:
+            value = candidate_node.get_attribute(attribute) or ""
+            if attribute == "href" and value:
+                value = urljoin(base_url, value)
+            video_url = douyin_video_url(value)
+            if video_url:
+                return video_url
+    return ""
 
 
 def _safe_inner_text(locator):
@@ -136,13 +191,26 @@ def _extract_context(anchor, title):
 def extract_items(page, base_url, platform, limit):
     rows = []
     seen = set()
-    for anchor in page.locator("a").all()[: max(limit * 8, 40)]:
+    selectors = "a, .FPJdJmQO, [data-video-id], [data-aweme-id], [data-e2e]"
+    for anchor in page.locator(selectors).all()[: max(limit * 12, 60)]:
         try:
             text = re.sub(r"\s+", " ", anchor.inner_text()).strip()
             href = anchor.get_attribute("href") or ""
-            if not text or len(text) < 4 or not href:
+            video_url = normalize_url(platform, urljoin(base_url, href)) if href else ""
+            if platform == "douyin" and not allowed_url(platform, video_url):
+                video_url = _douyin_node_video_url(anchor, base_url)
+            if platform == "douyin" and not video_url:
+                for attribute in ("data-video-id", "data-aweme-id", "data-id", "data-url", "data-e2e"):
+                    candidate = douyin_video_url(anchor.get_attribute(attribute))
+                    if candidate:
+                        video_url = candidate
+                        break
+            if not allowed_url(platform, video_url):
                 continue
-            url = urljoin(base_url, href)
+            if not text or len(text) < 4 or not video_url:
+                continue
+            original_url = urljoin(base_url, href) if href else video_url
+            url = video_url
             if not url.startswith("http") or url in seen:
                 continue
             if not allowed_url(platform, url):
@@ -151,6 +219,8 @@ def extract_items(page, base_url, platform, limit):
                 text = text[:237] + "..."
             seen.add(url)
             row = {"title": text, "url": url, "fetch_method": "browser_context"}
+            if original_url != url:
+                row["original_url"] = original_url
             row.update(_extract_context(anchor, text))
             rows.append(row)
             if len(rows) >= limit:
@@ -193,7 +263,7 @@ def enrich_bilibili_titles(page, rows):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("url")
-    parser.add_argument("--platform", default="", choices=("", "bilibili", "douyin", "wechat", "weibo"))
+    parser.add_argument("--platform", default="", choices=("", "bilibili", "douyin"))
     parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
     profile = configured_profile()
@@ -212,8 +282,12 @@ def main():
                 browser = playwright.chromium.launch(**launch_options(channel))
                 context = browser.new_context()
             page = context.new_page()
+            Stealth().apply_stealth_sync(page)
             page.goto(args.url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(1500)
+            if args.platform == "douyin" and "验证码" in page.title():
+                print(json.dumps({"error": "douyin_verification_interstitial"}, ensure_ascii=False))
+                return 0
             rows = extract_items(page, args.url, args.platform, args.limit)
             if args.platform == "bilibili":
                 rows = enrich_bilibili_titles(page, rows)

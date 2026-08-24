@@ -45,7 +45,7 @@ UNKNOWN_PUBLISH_DATE = '未知'
 UNKNOWN_PUBLISH_DATETIME = datetime.min
 DEFAULT_SOURCE_KEYS = (
     'juejin', 'devto', 'github', 'openai',
-    'douyin', 'bilibili', 'weibo_search', 'wechat',
+    'bilibili',
 )
 
 # === 来源配置 ===
@@ -72,6 +72,7 @@ SOURCE_NAME_CN = {
     'weibo_search': '微博关键词',
     'douyin': '抖音',
     'bilibili': 'Bilibili',
+    'youtube_tech': 'YouTube 科技频道',
     'wechat': '微信公众号',
     '36kr': '36 氪',
     'tencent': '腾讯新闻',
@@ -86,7 +87,7 @@ CATEGORY_MAP = {
     'hackernews': 'programmer', 'lobsters': 'programmer', 'devto': 'programmer',
     'devto_react': 'programmer', 'v2ex': 'programmer',
     'github': 'github',
-    'douyin': 'social', 'bilibili': 'social',
+    'douyin': 'social', 'bilibili': 'social', 'youtube_tech': 'social',
     'weibo': 'social', 'weibo_search': 'social', 'wechat': 'social',
     'react_blog': 'frontend', 'juejin': 'frontend', 'sspai': 'frontend',
     '掘金热榜': 'frontend',  # 中文 key 直接匹配
@@ -1155,7 +1156,7 @@ def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report
         # 把原来索引.md里的表格：发布时间 | 中文标题 | 文章总结 | [指标列] 放到这里
         sorted_src = sorted(src_items, key=lambda x: parse_publish_datetime(x)[1], reverse=True)
         src_metric_cols = collect_metric_columns(sorted_src)
-        src_base_cols = ['发布时间', '中文标题', '推荐等级', '文章总结']
+        src_base_cols = ['是否阅读', '发布时间', '中文标题', '推荐等级', '文章总结']
         src_extra_cols = [c for c in src_metric_cols if c not in src_base_cols]
         src_headers = src_base_cols + src_extra_cols
         src_rows = []
@@ -1173,6 +1174,7 @@ def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report
             display_title = clean_markdown_cell(title_zh or title_orig)
             metrics = extract_metrics(item)
             row = [
+                '[ ]',
                 pub_time_full,
                 f"[{display_title}]({rel_path})",
                 recommendation_level_label(item.get('recommendation_level')),
@@ -1281,7 +1283,7 @@ def fallback_summary(news_items, batch_tag, error):
 
 
 def fetch_candidate_content(items):
-    """Fetch正文 for every candidate when deep mode is enabled."""
+    """Fetch full text for every candidate when deep mode is enabled."""
     if not items:
         return []
     for item in items:
@@ -1297,11 +1299,19 @@ def fetch_candidate_content(items):
     with_url = [item for item in items if item.get('url', '').startswith('http')]
     if with_url:
         enrich_items_with_content(with_url)
+    for item in items:
+        content = item.get('content', '') or ''
+        if content:
+            # The final editorial pipeline reads evidence_snapshot in both modes.
+            item['evidence_snapshot'] = content
+            item['evidence_status'] = item.get('content_fetch_status', 'fetched')
+            item['evidence_method'] = f"full_{item.get('content_fetch_method', 'text')}"
+            item['evidence_length'] = len(content)
     return items
 
 
 def fetch_candidate_evidence(items):
-    """Fetch bounded DOM snapshots only for candidates selected by AI."""
+    """Fetch complete DOM text only for candidates selected by AI."""
     if not items:
         return []
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -1557,7 +1567,7 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
                 print(f"AI 已选择 {len(candidates)} 条，开始抓取入选项完整正文...")
                 candidates = fetch_candidate_content(candidates)
             elif evidence_mode == 'snapshot':
-                print(f"AI 已选择 {len(candidates)} 条，开始读取受限 DOM 文本快照...")
+                print(f"AI 已选择 {len(candidates)} 条，开始读取完整 DOM 正文证据...")
                 candidates = fetch_candidate_evidence(candidates)
             else:
                 for item in candidates:
@@ -1566,7 +1576,7 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
                     item['evidence_length'] = 0
 
             write_json_report(Path('reports') / TODAY / 'evidence_snapshots.json', candidates)
-            print("开始基于快照一次性完成翻译、总结、时间确认和最终质量判断...")
+            print("开始基于全文分段证据完成翻译、总结、时间确认和最终质量判断...")
             summarized = process_ai_snapshots(
                 candidates, batch_tag, topics=topics, recency_days=recency_days
             )
@@ -1708,7 +1718,7 @@ def main():
     parser.add_argument('--deep', action='store_true',
                         help='兼容参数：仅对 AI 入选项拉取完整正文，等同 --evidence-mode full')
     parser.add_argument('--evidence-mode', choices=('metadata', 'snapshot', 'full'), default='snapshot',
-                        help='AI 入选后的证据模式，默认 snapshot（受限 DOM 文本快照）')
+                        help='AI 入选后的证据模式，默认 snapshot（完整 DOM 正文，分段审阅）')
     parser.add_argument('--profile', default='tech', help='批次标签')
     parser.add_argument('--topics', help='自定义推荐主题，逗号分隔')
     parser.add_argument('--recency-days', type=int, default=7, help='近多少天内容获得时效优先级')

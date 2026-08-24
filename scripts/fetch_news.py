@@ -272,6 +272,8 @@ def _fetch_public_url(url, max_redirects=3, max_bytes=5 * 1024 * 1024):
     return None
 
 MIN_ARTICLE_CONTENT_CHARS = 200
+# Retained for callers that explicitly request a short excerpt. The default
+# evidence pipeline below now keeps the complete extracted article text.
 MAX_EVIDENCE_CHARS = 4000
 MIN_EVIDENCE_CHARS = 300
 
@@ -324,12 +326,7 @@ def _extract_article_text(html_content):
         previous_empty = False
         cleaned.append(line)
     full_text = '\n'.join(cleaned).strip()
-    if len(full_text) <= 15000:
-        return full_text
-    cut = full_text.rfind('\n\n', 0, 15000)
-    if cut == -1:
-        cut = full_text.rfind('\n', 0, 15000)
-    return full_text[:cut if cut > 0 else 15000].strip()
+    return full_text
 
 
 def fetch_url_content(url):
@@ -344,45 +341,48 @@ def fetch_url_content(url):
         return ""
 
 
-def fetch_url_evidence(url, max_bytes=384 * 1024, max_chars=MAX_EVIDENCE_CHARS):
-    """Return a bounded DOM text snapshot without retaining the full article."""
+def fetch_url_evidence(url, max_bytes=5 * 1024 * 1024, max_chars=None):
+    """Return complete extracted article text for evidence processing.
+
+    ``max_chars`` remains available for callers that explicitly need an excerpt.
+    """
     evidence, _ = _fetch_url_evidence_with_method(url, max_bytes=max_bytes, max_chars=max_chars)
     return evidence
 
 
-def _fetch_url_evidence_with_method(url, max_bytes=384 * 1024, max_chars=MAX_EVIDENCE_CHARS):
-    """Return a readable bounded snapshot and the method used to obtain it."""
+def _fetch_url_evidence_with_method(url, max_bytes=5 * 1024 * 1024, max_chars=None):
+    """Return readable article evidence and the method used to obtain it."""
     if not url:
         return "", "feed_metadata"
     try:
         content = _fetch_public_url(url, max_bytes=max_bytes)
         text = _extract_article_text(content) if content else ""
-        method = "bounded_dom_text"
+        method = "full_dom_text" if max_chars is None else "bounded_dom_text"
     except Exception:
         text = ""
 
     if not _is_readable_text(text):
         text = fetch_url_content_browser(url)
-        method = "bounded_browser_text"
+        method = "full_browser_text" if max_chars is None else "bounded_browser_text"
     if not _is_readable_text(text):
         return "", "feed_metadata"
-    return _truncate_evidence(text, max_chars), method
+    return _truncate_evidence(text, max_chars) if max_chars is not None else text.strip(), method
 
 
-def _fetch_deep_evidence(url, max_chars=MAX_EVIDENCE_CHARS):
-    """Retry short snapshots with full HTTP text, then a longer browser render."""
+def _fetch_deep_evidence(url, max_chars=None):
+    """Retry short evidence with full HTTP text, then a longer browser render."""
     text = fetch_url_content(url)
-    method = "deep_dom_text"
+    method = "full_dom_text"
     if not _is_readable_text(text, min_chars=MIN_EVIDENCE_CHARS):
         text = fetch_url_content_browser(url, wait_ms=3000)
-        method = "deep_browser_text"
+        method = "full_browser_text"
     if not _is_readable_text(text, min_chars=MIN_EVIDENCE_CHARS):
         return "", ""
-    return _truncate_evidence(text, max_chars), method
+    return _truncate_evidence(text, max_chars) if max_chars is not None else text.strip(), method
 
 
 def enrich_items_with_evidence(items, max_workers=8):
-    """Attach short, AI-readable page snapshots while preserving item order."""
+    """Attach complete, AI-readable article text while preserving item order."""
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_item = {
             executor.submit(_fetch_url_evidence_with_method, item.get('url', '')): item
@@ -589,44 +589,6 @@ def fetch_hackernews(limit=5, keyword=None):
         time.sleep(0.5)
 
     return news_items[:limit]
-
-def fetch_weibo(limit=5, keyword=None):
-    # Use the PC Ajax API which returns JSON directly and is less rate-limited than scraping s.weibo.com
-    url = "https://weibo.com/ajax/side/hotSearch"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://weibo.com/"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
-        items = data.get('data', {}).get('realtime', [])
-        
-        all_items = []
-        for item in items:
-            # key 'note' is usually the title, sometimes 'word'
-            title = item.get('note', '') or item.get('word', '')
-            if not title: continue
-            
-            # 'num' is the heat value
-            heat = item.get('num', 0)
-            
-            # Construct URL (usually search query)
-            # Web UI uses: https://s.weibo.com/weibo?q=%23TITLE%23&Refer=top
-            full_url = f"https://s.weibo.com/weibo?q={requests.utils.quote(title)}&Refer=top"
-            
-            all_items.append({
-                "source": "Weibo Hot Search", 
-                "title": title, 
-                "url": full_url, 
-                "heat": f"{heat}",
-                "time": ""
-            })
-            
-        return filter_items(all_items, keyword)[:limit]
-    except Exception: 
-        return []
 
 def github_repo_slug(url):
     match = re.match(r'https?://github\.com/([^/]+/[^/?#]+)', str(url or '').strip())
@@ -892,11 +854,11 @@ def fetch_producthunt(limit=5, keyword=None):
 # --- New Fetchers (RSS/API) ---
 
 from rss_parser import fetch_rss_feed
+
+
 from social_platforms import (
     fetch_bilibili,
     fetch_douyin,
-    fetch_wechat,
-    fetch_weibo_search,
     consume_filter_stats,
 )
 
@@ -1449,11 +1411,10 @@ def save_report(data, source_name, out_dir):
 def main():
     parser = argparse.ArgumentParser()
     sources_map = {
-        'hackernews': fetch_hackernews, 'weibo': fetch_weibo, 'github': fetch_github,
-        'weibo_search': fetch_weibo_search,
+        'hackernews': fetch_hackernews, 'github': fetch_github,
         'douyin': fetch_douyin,
         'bilibili': fetch_bilibili,
-        'wechat': fetch_wechat,
+        'youtube_tech': create_recent_rss_fetcher("https://www.youtube.com/feeds/videos.xml?channel_id=UCXuqSBlHAE6Xw-yeJA0Tunw", "YouTube 科技频道"),
         '36kr': fetch_36kr, 'v2ex': fetch_v2ex, 'tencent': fetch_tencent,
         'wallstreetcn': fetch_wallstreetcn, 'producthunt': fetch_producthunt,
         # Aggregates

@@ -1,6 +1,6 @@
 ---
 name: news-aggregator-skill
-description: "Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 44+ sources including Hacker News, Lobsters, Dev.to, GitHub, arXiv, Hugging Face Papers, AIHOT, TLDR AI, Import AI, BBC, The Guardian, Al Jazeera, France 24, Reuters fallback, AI Newsletters, WallStreetCN, Weibo, 少数派, InfoQ 中文, Podcasts, and user-defined OPML feeds. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'international news', 'deep analysis', or says '如意如意' to open the interactive menu."
+description: "Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 44+ sources including Hacker News, Lobsters, Dev.to, GitHub, arXiv, Hugging Face Papers, AIHOT, TLDR AI, Import AI, BBC, The Guardian, Al Jazeera, France 24, Reuters fallback, AI Newsletters, WallStreetCN, 少数派, InfoQ 中文, Podcasts, and user-defined OPML feeds. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'international news', 'deep analysis', or says '如意如意' to open the interactive menu."
 ---
 
 # News Aggregator Skill
@@ -61,7 +61,6 @@ Only the **differences** from the universal template:
 | **Hacker News**        | **MUST** include `[Discussion](hn_url)` link                                                                                                                                                                  |
 | **GitHub**             | Use `🌟 Stars` for Heat, add `Lang` field, add `#Tags` in Deep Dive                                                                                                                                           |
 | **Hugging Face**       | Use `🔥 +N` upvotes for Heat, include `[GitHub](url)` if present, write **深度解读** (not just translate abstract)                                                                                            |
-| **Weibo**              | Preserve exact heat text (e.g. "108万")                                                                                                                                                                       |
 | **AIHOT**              | `summary` 已是中文编辑稿，**直接引用**不要再翻译；Heat 字段为空也别造数据；保留 `推荐理由` 风格的一句话点评                                                                                                   |
 | **TLDR AI**            | 单条标题往往是多主题混合（`Topic A 💻, Topic B ⚡, Topic C ⛪`），**拆成 bullet 列出每个主题**；`summary` 是 HTML 段落，需要拆出每个主题对应的一两句概述                                                      |
 | **Import AI**          | 周刊长文，标题形如 `Import AI 458: 主题1; 主题2; 主题3`。**建议默认配 `--deep`**，否则 RSS summary 只是开头几句；Deep Dive 直接提炼 Jack Clark 的核心观点而非平铺事实                                         |
@@ -91,7 +90,6 @@ Only the **differences** from the universal template:
 |                         | `36kr`           | 36氪                                                                                |
 |                         | `wallstreetcn`   | 华尔街见闻                                                                          |
 |                         | `tencent`        | 腾讯新闻                                                                            |
-|                         | `weibo`          | 微博热搜                                                                            |
 |                         | `v2ex`           | V2EX                                                                                |
 |                         | `producthunt`    | Product Hunt                                                                        |
 |                         | `github`         | GitHub Trending                                                                     |
@@ -139,8 +137,6 @@ Only the **differences** from the universal template:
 | **Custom** (v2)         | `user`           | Your OPML feeds (see below)                                                         |
 | **Social**              | `douyin`         | Douyin technical-content discovery                                                  |
 |                         | `bilibili`       | Bilibili technical-content discovery                                                |
-|                         | `weibo_search`   | Weibo keyword discovery                                                             |
-|                         | `wechat`         | WeChat Official Account article discovery                                           |
 
 ### 自定义订阅源 (User OPML)
 
@@ -170,7 +166,7 @@ Write a daily briefing and individual article notes to an Obsidian Vault:
 py scripts/push_to_obsidian.py --vault "D:/Obsidian/自动信息获取"
 ```
 
-默认来源为 `juejin,devto,github,openai,douyin,bilibili,weibo_search,wechat`，每源上限为 15 条。可用 `--source` 覆盖默认来源。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取受限 DOM 文本快照；`--deep` 仅作为完整正文兼容模式。社交来源按 `config/social_sources.json` 中的关键词发现内容。
+默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源按 `config/social_sources.json` 中的关键词发现内容。
 
 The output is `<Vault>/自动获取信息/YYYY-MM-DD/`: article notes are stored in `信息源/<来源中文名>/`, and `今日总结.md` at the date root is regenerated from every article already stored for that day. AI 拒绝结果写入同级的 `拒绝集合/`：每日页面展示全部拒绝与待复核项，`_拒绝索引.json` 供程序执行确定性拒绝的历史去重。
 
@@ -209,7 +205,7 @@ When the user says **"如意如意"** or asks for "menu/help":
     ↓
 [AI 判断时间语义、过滤低价值候选并选择要打开的文章]
     ↓
-[读取入选文章的短 DOM 快照]
+[读取入选文章完整 DOM 正文并分段审阅]
     ↓
 [AI 一次完成翻译、总结与最终质量确认]
     ↓
@@ -252,7 +248,7 @@ Windows 使用 `scripts/run_daily.ps1` 作为任务计划程序入口。运行�
 
 ### 内容质量评估与推荐过滤
 
-`push_to_obsidian.py` 会保留各来源的原始时间字段并先进行历史去重。AI 根据标题、摘要、来源信号、原始时间和主题判断是否值得打开；未入选内容直接进入审计。入选项默认只读取受限长度的 DOM 文本快照，然后由同一次 AI 请求完成中文标题、摘要、最终质量判断和时间确认。高价值旧文章、当前热榜及持续更新项目仍可保留。
+`push_to_obsidian.py` 会保留各来源的原始时间字段并先进行历史去重。AI 根据标题、摘要、来源信号、原始时间和主题判断是否值得打开；未入选内容直接进入审计。入选项默认读取完整 DOM 正文，每个段落块先提取可验证证据，再基于全部分段结论完成中文标题、摘要、最终质量判断和时间确认。高价值旧文章、当前热榜及持续更新项目仍可保留。
 
 日报流程不使用统一的程序时间解析器提前淘汰候选。AI 必须返回 `published_at`、`time_kind`、`time_confidence` 和 `time_evidence`，区分首次发布、更新、GitHub 最近推送、榜单采集及未知时间。缺失时间不能单独成为拒绝理由；程序只校验结构并保存判断证据。
 
@@ -268,12 +264,13 @@ AI 根据用户主题、页面快照中的可验证证据、内容完整度、�
 
 ### 社交平台技术内容
 
-新增平台 key：`douyin`、`bilibili`、`weibo_search`、`wechat`。默认关键词配置位于
+新增平台 key：`douyin`、`bilibili`。默认关键词配置位于
 `config/social_sources.json`，也可用 `NEWS_AGGREGATOR_SOCIAL_CONFIG` 指定本地配置文件。
-这四个来源已纳入常规 Obsidian 日报的默认来源列表。
+Bilibili 已纳入常规 Obsidian 日报的默认来源列表；抖音仍可通过显式 `--source douyin` 单独抓取。
+
 
 ```bash
-python scripts/fetch_news.py --source douyin,bilibili,weibo_search,wechat --limit 5 --keyword "前端,AI,软件工程"
+python scripts/fetch_news.py --source douyin,bilibili --limit 5 --keyword "前端,AI,软件工程"
 ```
 
 适配器优先使用显式配置的 JSON API：`SOCIAL_API_URL_DOUYIN`、
@@ -283,7 +280,7 @@ Playwright 公开搜索页。浏览器会话目录可通过 `NEWS_AGGREGATOR_BRO
 不要把 Cookie、Token 或会话目录提交到仓库。
 
 社交平台抓取标题、简介、作者、发布时间和可见互动数据。Bilibili 和抖音只保留真实视频链接，
-不下载视频；视频字幕、ASR 和 OCR 属于后续扩展能力。微信公众号只保留
+不下载视频；视频字幕、ASR 和 OCR 属于后续扩展能力。
 `mp.weixin.qq.com/s` 文章，并过滤官网、百科和明确推广内容。
 
 GitHub Trending 继续保留热榜排名，并通过 GitHub API 补充仓库最近一次 `pushed_at`；笔记中将其标为“最近推送时间”，不将其误称为发布时间。普通 GitHub 搜索结果仍遵守默认 24 小时窗口。

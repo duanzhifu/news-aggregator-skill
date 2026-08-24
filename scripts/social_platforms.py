@@ -1,4 +1,4 @@
-"""Adapters for public Douyin, Bilibili, Weibo and WeChat content discovery."""
+"""Adapters for public Douyin and Bilibili content discovery."""
 import json
 import os
 import subprocess
@@ -65,13 +65,6 @@ def source_key(source):
         "bilibili": "bilibili",
         "douyin": "douyin",
         "抖音": "douyin",
-        "wechat": "wechat",
-        "wechatofficialaccount": "wechat",
-        "微信公众号": "wechat",
-        "公众号": "wechat",
-        "weibosearch": "weibo",
-        "微博关键词": "weibo",
-        "微博": "weibo",
     }.get(value, value)
 
 
@@ -84,8 +77,6 @@ def allowed_social_url(platform, url):
     host = (parsed.hostname or "").casefold()
     path = parsed.path.casefold()
     platform = source_key(platform)
-    if platform == "wechat":
-        return host == "mp.weixin.qq.com" and (path == "/s" or path.startswith("/s/"))
     if platform == "bilibili":
         return host in {"bilibili.com", "www.bilibili.com", "m.bilibili.com"} and path.startswith("/video/")
     if platform == "douyin":
@@ -101,7 +92,7 @@ def disallowed_reason(source, row=None, item=None):
     url = str(item.get("url") or row.get("url") or row.get("link") or "").strip()
     url_lower = url.casefold()
 
-    if key in {"wechat", "bilibili", "douyin"} and not allowed_social_url(key, url):
+    if key in {"bilibili", "douyin"} and not allowed_social_url(key, url):
         return "不符合来源链接白名单"
     if "baike.baidu.com" in url_lower or "百度百科" in url_lower:
         return "百度百科或百科导流内容"
@@ -154,7 +145,7 @@ def normalize_rows(rows, source, keyword, limit):
         url = str(row.get("url") or row.get("link") or "").strip()
         if not title or not url or not url.startswith("http"):
             continue
-        if source_key(source) in {"wechat", "bilibili", "douyin"} and not allowed_social_url(source, url):
+        if source_key(source) in {"bilibili", "douyin"} and not allowed_social_url(source, url):
             _record_filter(source, "url_not_allowed")
             continue
         if url in seen_urls:
@@ -197,12 +188,7 @@ def normalize_rows(rows, source, keyword, limit):
     return items[:limit]
 
 
-def browser_search(platform, query, limit):
-    config = load_config()
-    template = config.get("search_urls", {}).get(platform)
-    if not template:
-        return []
-    url = template.format(query=quote(query, safe=""))
+def browser_page(platform, url, limit):
     script = Path(__file__).with_name("fetch_social_browser.py")
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -235,6 +221,14 @@ def browser_search(platform, query, limit):
         return []
 
 
+def browser_search(platform, query, limit):
+    config = load_config()
+    template = config.get("search_urls", {}).get(platform)
+    if not template:
+        return []
+    return browser_page(platform, template.format(query=quote(query, safe="")), limit)
+
+
 def configured_api_search(platform, source, query, limit):
     """Use an explicitly configured platform API before browser discovery."""
     endpoint = os.environ.get(f"SOCIAL_API_URL_{platform.upper()}", "").strip()
@@ -263,45 +257,16 @@ def configured_api_search(platform, source, query, limit):
         return []
 
 
-def fetch_weibo_hot(limit=5, keyword=None):
-    """Keep the existing lightweight hot-search API as the official-first path."""
-    try:
-        response = requests.get(
-            "https://weibo.com/ajax/side/hotSearch",
-            headers={**HEADERS, "Referer": "https://weibo.com/"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        rows = []
-        for entry in response.json().get("data", {}).get("realtime", []):
-            title = entry.get("note") or entry.get("word") or ""
-            if not title:
-                continue
-            rows.append({
-                "title": title,
-                "url": f"https://s.weibo.com/weibo?q={quote(title)}&Refer=top",
-                "heat": str(entry.get("num", "")),
-                "time": "Real-time",
-                "fetch_method": "official_api",
-            })
-        return normalize_rows(rows, "Weibo Hot Search", keyword, limit)
-    except Exception as error:
-        print(f"Weibo hot search fetch error: {error}", file=sys.stderr)
-        return []
-
-
 def fetch_social(platform, source, limit=5, keyword=None):
     keywords = configured_keywords(keyword)
     if not keywords:
         return []
     rows = []
     per_query = max(2, min(limit, 5))
-    max_queries = max(1, int(os.environ.get("SOCIAL_MAX_QUERIES", "5")))
+    max_queries = max(1, int(os.environ.get("SOCIAL_MAX_QUERIES", "15")))
     for value in keywords[:max_queries]:
         api_rows = configured_api_search(platform, source, value, per_query)
         rows.extend(api_rows or browser_search(platform, value, per_query))
-        if len(rows) >= limit * 2:
-            break
     return normalize_rows(rows, source, keyword, limit)
 
 
@@ -311,11 +276,3 @@ def fetch_douyin(limit=5, keyword=None):
 
 def fetch_bilibili(limit=5, keyword=None):
     return fetch_social("bilibili", "Bilibili", limit, keyword)
-
-
-def fetch_weibo_search(limit=5, keyword=None):
-    return fetch_social("weibo", "Weibo Search", limit, keyword)
-
-
-def fetch_wechat(limit=5, keyword=None):
-    return fetch_social("wechat", "WeChat Official Account", limit, keyword)

@@ -6,14 +6,10 @@
   },
   "accounts": {
     "douyin": [],
-    "bilibili": [],
-    "weibo": [],
-    "wechat": []
+    "bilibili": []
   },
   "search_urls": {
     "douyin": "https://www.douyin.com/search/{query}",
-    "bilibili": "https://search.bilibili.com/all?keyword={query}",
-    "weibo": "https://s.weibo.com/weibo?q={query}",
-    "wechat": "https://cn.bing.com/search?q=site%3Amp.weixin.qq.com%2Fs+{query}"
+    "bilibili": "https://search.bilibili.com/all?keyword={query}"
   }
 }
