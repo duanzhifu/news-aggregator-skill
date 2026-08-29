@@ -105,29 +105,6 @@ def disallowed_reason(source, row=None, item=None):
     price = row.get("price")
     if price not in (None, "", 0, "0", "0.0", "0.00", 0.0):
         return "内容带有购买价格"
-
-    fields = ("title", "summary", "description", "author", "content")
-    text = " ".join(str((item.get(field) or row.get(field) or "")) for field in fields).casefold()
-    commercial_action = ("购买", "付费", "报名", "优惠", "咨询", "推广", "广告", "purchase", "paid", "buy", "sale")
-    direct_sales_signals = (
-        "付费课程", "付费课", "购买课程", "课程购买", "立即购买",
-        "报名课程", "报名训练营", "卖课", "私教", "加微信",
-        "加v", "加 vx", "课程优惠", "训练营优惠", "付费专栏",
-        "推广合作", "商业推广", "广告推广", "软文推广",
-    )
-    actual_sales_actions = ("购买", "付费", "报名", "价格", "加微信", "广告", "推广", "立即购买")
-    actual_product_types = ("课程", "教程", "训练营", "会员", "专栏", "服务")
-    if any(action in text for action in actual_sales_actions) and any(
-        kind in text for kind in actual_product_types
-    ):
-        return "明确推广或销售内容"
-    if any(signal in text for signal in direct_sales_signals) and any(action in text for action in commercial_action):
-        return "明确推广或销售内容"
-
-    commercial_action = ("购买", "付费", "报名", "优惠", "咨询", "推广", "广告")
-    product_type = ("课程", "教程", "训练营", "专栏", "会员", "产品", "服务")
-    if any(action in text for action in commercial_action) and any(kind in text for kind in product_type):
-        return "疑似商业推广内容"
     return ""
 
 
@@ -182,7 +159,7 @@ def normalize_rows(rows, source, keyword, limit):
         if is_disallowed_item(source, row, item):
             _record_filter(source, disallowed_reason(source, row, item))
             continue
-        if keyword_matches(item, configured_keywords(keyword)):
+        if source_key(source) == "bilibili" or keyword_matches(item, configured_keywords(keyword)):
             items.append(item)
             seen_urls.add(url)
     return items[:limit]
@@ -258,6 +235,10 @@ def configured_api_search(platform, source, query, limit):
 
 
 def fetch_social(platform, source, limit=5, keyword=None):
+    if not keyword and source_key(platform) == "bilibili":
+        env_topics = os.environ.get("NEWS_AGGREGATOR_TOPICS", "").strip()
+        if env_topics:
+            keyword = env_topics
     keywords = configured_keywords(keyword)
     if not keywords:
         return []

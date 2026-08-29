@@ -178,12 +178,34 @@ class SocialPlatformTests(unittest.TestCase):
         }]
         self.assertEqual([], social_platforms.normalize_rows(rows, "Bilibili", "AI", 5))
 
-    def test_bilibili_drops_explicit_course_sales(self):
+    def test_bilibili_keeps_course_sales_for_downstream_llm(self):
+        # 抓取层不再按标题字面词硬删课程销售内容，保留交给下游 LLM 准入层语义判断。
         rows = [{
             "title": "报名购买 AI 训练营课程",
             "url": "https://www.bilibili.com/video/BV123",
         }]
-        self.assertEqual([], social_platforms.normalize_rows(rows, "Bilibili", "AI", 5))
+        result = social_platforms.normalize_rows(rows, "Bilibili", "AI", 5)
+        self.assertEqual(1, len(result))
+        self.assertEqual("报名购买 AI 训练营课程", result[0]["title"])
+
+    def test_bilibili_skips_keyword_literal_match(self):
+        # bilibili 用 topics 搜索后不再按完整短语做字面子串过滤（B 站搜索已保证相关性，语义交下游 LLM）。
+        rows = [{
+            "title": "MiniMax H3 最强动态",
+            "url": "https://www.bilibili.com/video/BV999",
+        }]
+        result = social_platforms.normalize_rows(rows, "Bilibili", "大模型最新动态", 5)
+        self.assertEqual(1, len(result))
+        self.assertEqual("MiniMax H3 最强动态", result[0]["title"])
+
+    def test_douyin_still_keyword_matches(self):
+        # douyin 保持原行为：标题不含关键词仍按字面过滤。
+        rows = [{
+            "title": "与关键词无关的视频",
+            "url": "https://www.douyin.com/video/12345678",
+        }]
+        result = social_platforms.normalize_rows(rows, "Douyin", "AI", 5)
+        self.assertEqual([], result)
 
     def test_bilibili_keeps_free_technical_video(self):
         rows = [{
@@ -214,6 +236,23 @@ class SocialPlatformTests(unittest.TestCase):
                 ) as browser:
             social_platforms.fetch_social("douyin", "Douyin", 1)
         self.assertEqual(keywords, [call.args[1] for call in browser.call_args_list])
+
+    def test_bilibili_uses_env_topics_as_keywords(self):
+        topics = "大模型最新动态,AI Agent 框架与多智能体协作"
+        with patch.dict(os.environ, {"NEWS_AGGREGATOR_TOPICS": topics}), \
+                patch.object(social_platforms, "configured_keywords", return_value=["大模型最新动态"]) as kw, \
+                patch.object(social_platforms, "configured_api_search", return_value=[]), \
+                patch.object(social_platforms, "browser_search", return_value=[]):
+            social_platforms.fetch_social("bilibili", "Bilibili", 5)
+        self.assertEqual(topics, kw.call_args.args[0])
+
+    def test_bilibili_without_env_topics_falls_back_to_default(self):
+        with patch.dict(os.environ, {"NEWS_AGGREGATOR_TOPICS": ""}), \
+                patch.object(social_platforms, "configured_keywords", return_value=["前端"]) as kw, \
+                patch.object(social_platforms, "configured_api_search", return_value=[]), \
+                patch.object(social_platforms, "browser_search", return_value=[]):
+            social_platforms.fetch_social("bilibili", "Bilibili", 5)
+        self.assertIsNone(kw.call_args.args[0])
 
     def test_social_search_respects_explicit_query_limit(self):
         keywords = [f"keyword-{index}" for index in range(15)]

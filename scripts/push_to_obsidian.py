@@ -19,6 +19,9 @@
       拒绝集合/
         YYYY-MM-DD.md                  # 当天全部拒绝和待复核项目
         _拒绝索引.json                 # AI 前历史去重使用的结构化索引
+      收藏集合/
+        收藏.md                        # 跨日收藏入口（链回各日文章，不复制正文）
+        _收藏索引.json                 # 记录第一次勾选日期
 """
 import argparse
 import hashlib
@@ -79,6 +82,83 @@ SOURCE_NAME_CN = {
     'wallstreetcn': '华尔街见闻',
     'producthunt': 'Product Hunt',
 }
+
+USER_CONFIG_PATH = Path(__file__).resolve().parent.parent / 'user_interests.json'
+
+
+def load_user_config():
+    """读取 skill 根目录 user_interests.json，丢弃 _ 开头的注释键。"""
+    try:
+        with open(USER_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return {k: v for k, v in data.items() if not k.startswith('_')}
+    except Exception:
+        return {}
+
+
+def _extract_topic_keywords(topics):
+    """从 topics 提取特征词：英文技术词 + 核心中文词，用于 L1 宽松主题匹配（避免误杀）。"""
+    kws = set()
+    for t in topics or []:
+        t = str(t)
+        kws.update(m.lower() for m in re.findall(r'[A-Za-z][A-Za-z0-9-]*', t))
+    kws.update({'大模型', '模型', '智能体', '推理'})
+    kws.discard('')
+    return kws
+
+
+def _match_block_pattern(url, patterns):
+    try:
+        path = (urlsplit(url).path or '')
+    except Exception:
+        path = ''
+    return any(p and p in path for p in (patterns or []))
+
+
+def _match_block_host(url, hosts):
+    """L0 域名黑名单：匹配 URL 的 hostname（精确或子域后缀），零成本挡，不进 LLM。"""
+    try:
+        host = (urlsplit(url).hostname or '').lower()
+    except Exception:
+        host = ''
+    for h in hosts or []:
+        h = str(h).strip().lower()
+        if not h:
+            continue
+        if host == h or host.endswith('.' + h):
+            return True
+    return False
+
+
+def apply_zero_cost_rules(items, user_config):
+    """L0 零成本硬规则过滤，只作用于动态搜索项；RSS 固定源全部保留。
+    主题相关性判断交给 L2 LLM（已注入 topics），避免字面关键词误杀语义相关干货（如 Speckit）。"""
+    try:
+        from domain_mapper import is_site_homepage
+    except Exception:
+        from scripts.domain_mapper import is_site_homepage
+    patterns = user_config.get('block_url_patterns') or []
+    hosts = user_config.get('block_hosts') or []
+    kept, dropped = [], []
+    for item in items:
+        if not (item.get('topic_matched') or item.get('original_source_name')):
+            # RSS 固定源（用户主动订阅）不做规则过滤
+            kept.append(item)
+            continue
+        url = item.get('url', '')
+        if is_site_homepage(url):
+            dropped.append((item, '官网首页'))
+            continue
+        if _match_block_pattern(url, patterns):
+            dropped.append((item, '命中 block_url_patterns'))
+            continue
+        if _match_block_host(url, hosts):
+            dropped.append((item, '命中 block_hosts'))
+            continue
+        kept.append(item)
+    for item, reason in dropped:
+        print('[规则过滤] 丢弃: [{}] {} ({})'.format(reason, item.get('title', ''), item.get('url', '')))
+    return kept
 
 CATEGORY_MAP = {
     'huggingface': 'ai', 'arxiv': 'ai', 'aihot': 'ai', 'tldr_ai': 'ai',
@@ -157,8 +237,35 @@ def get_source_cn(source_key, original_source_name=''):
     if key in SOURCE_NAME_CN:
         return SOURCE_NAME_CN[key]
     if original_source_name:
+        SOURCE_NAME_CN[key] = original_source_name
         return original_source_name
+    SOURCE_NAME_CN[key] = source_key
     return source_key
+
+
+def article_identity_keys(item, src_cn=''):
+    """Stable identities for vault dedupe: canonical URL first, then title+source."""
+    keys = []
+    url = canonical_item_url(item.get('url') or item.get('链接') or '')
+    if url:
+        keys.append(('url', url))
+    title = re.sub(r'\s+', ' ', str(item.get('title') or item.get('原文标题') or '').strip()).casefold()
+    source = str(src_cn or item.get('source') or '').strip()
+    if title and source:
+        keys.append(('title', source, title))
+    return keys
+
+
+def article_already_exists(item, existing, src_cn=''):
+    """True when this item matches a previously written vault article.
+
+    URL identity wins. Title+source is only used when the incoming item has no URL.
+    """
+    keys = article_identity_keys(item, src_cn)
+    url_keys = [key for key in keys if key[0] == 'url']
+    if url_keys:
+        return any(key in existing for key in url_keys)
+    return any(key in existing for key in keys)
 
 
 SOURCE_KEY_ALIAS = {
@@ -396,6 +503,72 @@ def encode_markdown_path(path):
     return quote(str(path).replace('\\', '/'), safe='./-_%')
 
 
+def normalize_article_path(path):
+    """Decode a summary-table href into a stable article identity."""
+    text = unquote(str(path or '').strip()).replace('\\', '/')
+    return text.rstrip('/')
+
+
+def article_read_key(src_cn, filename):
+    """Build the same identity used by daily-summary article links."""
+    return normalize_article_path(f'./信息源/{src_cn}/{filename}')
+
+
+_CHECKBOX_RE = re.compile(r'^\[([xX ])\]$|^\[\]$')
+_HREF_RE = re.compile(r'\]\(([^)]+)\)')
+_TITLE_RE = re.compile(r'\[([^\]]*)\]\(')
+
+
+def _is_checkbox_cell(cell):
+    return bool(_CHECKBOX_RE.match(str(cell or '').strip()))
+
+
+def _checkbox_checked(cell):
+    return str(cell or '').strip().lower() == '[x]'
+
+
+def parse_daily_summary_checkbox_rows(markdown):
+    """Parse 今日总结 table rows into read/saved checkbox states.
+
+    Keys are decoded relative paths such as ``./信息源/GitHub Trending/未知-….md``.
+    Read is the first cell. Saved is the last cell when that cell is a checkbox;
+    older tables without 是否收藏 are treated as not saved.
+    """
+    rows = []
+    for raw_line in str(markdown or '').splitlines():
+        line = raw_line.strip()
+        if not line.startswith('|'):
+            continue
+        cells = [cell.strip() for cell in line.strip('|').split('|')]
+        if len(cells) < 3 or not _is_checkbox_cell(cells[0]):
+            continue
+        href_match = _HREF_RE.search(cells[2])
+        if not href_match:
+            continue
+        key = normalize_article_path(href_match.group(1))
+        if not key:
+            continue
+        title_match = _TITLE_RE.search(cells[2])
+        saved = _checkbox_checked(cells[-1]) if len(cells) > 3 and _is_checkbox_cell(cells[-1]) else False
+        rows.append({
+            'key': key,
+            'title': title_match.group(1) if title_match else cells[2],
+            'read': _checkbox_checked(cells[0]),
+            'saved': saved,
+        })
+    return rows
+
+
+def parse_daily_read_states(markdown):
+    """Read the 是否阅读 column. ``[x]`` / ``[X]`` mean read."""
+    return {row['key']: row['read'] for row in parse_daily_summary_checkbox_rows(markdown)}
+
+
+def parse_daily_saved_states(markdown):
+    """Read the 是否收藏 column. Missing column means not saved."""
+    return {row['key']: row['saved'] for row in parse_daily_summary_checkbox_rows(markdown)}
+
+
 def markdown_table(headers, rows):
     """Render a table and reject malformed rows instead of emitting broken Markdown."""
     width = len(headers)
@@ -623,6 +796,33 @@ def format_publish_datetime(pub_dt):
     return pub_dt.strftime('%Y-%m-%d %H:%M')
 
 
+TIME_KIND_LABELS = {
+    'published': None,
+    'updated': '更新于',
+    'repository_last_push': '仓库最近推送',
+    'ranking_observed': '热榜见到',
+    'unknown': '未知',
+}
+
+
+def format_time_display(item):
+    """Reader-facing time cell: real stamp, list-seen, or unknown. Never invent fetch time."""
+    kind = str(item.get('time_kind') or '').strip()
+    _, pub_dt = parse_publish_datetime(item)
+    has_stamp = pub_dt != UNKNOWN_PUBLISH_DATETIME
+    if kind == 'ranking_observed' and not has_stamp:
+        return '热榜见到'
+    if kind == 'repository_last_push' and has_stamp:
+        return f'仓库最近推送 {pub_dt.strftime("%Y-%m-%d %H:%M")}'
+    if kind == 'updated' and has_stamp:
+        return f'更新于 {pub_dt.strftime("%Y-%m-%d %H:%M")}'
+    if has_stamp:
+        return format_publish_datetime(pub_dt)
+    if kind == 'unknown' or not kind:
+        return '未知'
+    return TIME_KIND_LABELS.get(kind) or '未知'
+
+
 # 不同来源 heat 字符串的语义映射（source_key → (热度提取正则, 对应指标标签)）
 HEAT_METRIC_HINTS = {
     'github': (r'([\d,.]+[km]?)\s*(?:stars?)', '星标'),
@@ -822,6 +1022,7 @@ def _rejection_record(item, report_date):
         'url': item.get('url', ''),
         'stage': rejection_stage(item),
         'rejection_kind': normalized_rejection_kind(item),
+        'recommendation_level': item.get('recommendation_level', ''),
         'reason': str(reason).strip(),
         'evidence_points': rejection_evidence_points(item),
         'evidence_quality': item.get('evidence_quality', 'insufficient'),
@@ -835,19 +1036,22 @@ def _rejection_record(item, report_date):
 
 
 def build_rejection_daily_markdown(records, report_date):
+    eval_failed = [record for record in records if record.get('recommendation_level') == 'evaluation_failed']
     definitive = [record for record in records if record['rejection_kind'] == 'definitive']
-    transient = [record for record in records if record['rejection_kind'] != 'definitive']
+    transient = [record for record in records if record['rejection_kind'] != 'definitive' and record.get('recommendation_level') != 'evaluation_failed']
     lines = [
         '---',
         f'日期: "{report_date}"',
         f'拒绝总数: {len(records)}',
         f'确定性拒绝: {len(definitive)}',
         f'暂不推荐: {len(transient)}',
+        f'评估失败·待复核: {len(eval_failed)}',
         f'标签: ["AI筛选审计", "拒绝集合", "抓取日期-{report_date}"]',
         '---', '', f'# {report_date} AI 筛选审计', '',
         '> 确定性拒绝会参与后续历史去重；暂不推荐项会在后续抓取中保留重新评估机会。', '',
+        '> 「评估失败·待复核」是内容可能值得看、但 AI 评估出错（如 JSON 截断/空返回）未完成判断的项，可手动捞回。', '',
     ]
-    for heading, group in (('确定性拒绝', definitive), ('暂不推荐与待复核', transient)):
+    for heading, group in (('确定性拒绝', definitive), ('暂不推荐', transient), ('评估失败·待复核', eval_failed)):
         lines.extend([f'## {heading}（{len(group)}）', ''])
         rows = []
         for record in group:
@@ -899,6 +1103,123 @@ def write_rejection_collection(collection_dir, items, report_date=None):
     return collection_dir / f'{report_date}.md', len(daily_records), len(index_records)
 
 
+def _saved_article_id(fetch_date, article_key):
+    relative = normalize_article_path(article_key).lstrip('./')
+    return f'{fetch_date}/{relative}'
+
+
+def _source_from_article_key(article_key):
+    parts = normalize_article_path(article_key).lstrip('./').split('/')
+    if len(parts) >= 3 and parts[0] == '信息源':
+        return parts[1]
+    return ''
+
+
+def _load_saved_payload(collection_dir):
+    index_path = Path(collection_dir) / '_收藏索引.json'
+    if not index_path.exists():
+        return {'version': 1, 'records': {}}
+    try:
+        payload = json.loads(index_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {'version': 1, 'records': {}}
+    records = payload.get('records')
+    if not isinstance(records, dict):
+        records = {}
+    return {'version': payload.get('version', 1), 'records': records}
+
+
+def build_saved_collection_markdown(records, report_date):
+    ordered = sorted(
+        records.values(),
+        key=lambda record: (record.get('first_seen') or '', record.get('title') or ''),
+        reverse=True,
+    )
+    lines = [
+        '---',
+        f'更新: "{report_date}"',
+        f'收藏总数: {len(ordered)}',
+        '标签: ["收藏集合"]',
+        '---',
+        '',
+        '# 收藏集合',
+        '',
+        '> 来自各日「今日总结」表里勾了「是否收藏」的文章。取消勾选后下次导出会从这里拿掉。',
+        '',
+    ]
+    rows = []
+    for record in ordered:
+        title = clean_markdown_cell(record.get('title') or '（无标题）')
+        href = encode_markdown_path(f"../{record.get('article_path', '')}")
+        rows.append([
+            record.get('first_seen') or report_date,
+            clean_markdown_cell(record.get('source') or '-'),
+            f'[{title}]({href})',
+        ])
+    lines.extend(markdown_table(['收藏时间', '来源', '文章'], rows) if rows else [
+        '| 收藏时间 | 来源 | 文章 |',
+        '| --- | --- | --- |',
+    ])
+    lines.append('')
+    return '\n'.join(lines)
+
+
+def collect_saved_rows_from_vault(root):
+    """Scan every 今日总结.md and return currently checked 是否收藏 rows."""
+    collected = {}
+    root = Path(root)
+    if not root.exists():
+        return collected
+    for date_dir in sorted(root.iterdir()):
+        if not date_dir.is_dir() or date_dir.name in {'拒绝集合', '收藏集合'}:
+            continue
+        summary_path = date_dir / '今日总结.md'
+        if not summary_path.exists():
+            continue
+        try:
+            markdown = summary_path.read_text(encoding='utf-8')
+        except OSError:
+            continue
+        for row in parse_daily_summary_checkbox_rows(markdown):
+            if not row['saved']:
+                continue
+            record_id = _saved_article_id(date_dir.name, row['key'])
+            collected[record_id] = {
+                'id': record_id,
+                'title': row['title'],
+                'source': _source_from_article_key(row['key']),
+                'fetch_date': date_dir.name,
+                'article_path': record_id,
+                'article_key': row['key'],
+            }
+    return collected
+
+
+def write_saved_collection(root, report_date=None):
+    """Rebuild 收藏集合 from all daily-summary 是否收藏 checkboxes."""
+    report_date = report_date or TODAY
+    root = Path(root)
+    collection_dir = root / '收藏集合'
+    collection_dir.mkdir(parents=True, exist_ok=True)
+    current = collect_saved_rows_from_vault(root)
+    payload = _load_saved_payload(collection_dir)
+    previous = payload.get('records') or {}
+    records = {}
+    for record_id, record in current.items():
+        old = previous.get(record_id) or {}
+        record['first_seen'] = old.get('first_seen') or report_date
+        records[record_id] = record
+    payload = {
+        'version': 1,
+        'updated_at': datetime.now().isoformat(timespec='seconds'),
+        'records': records,
+    }
+    page_path = collection_dir / '收藏.md'
+    _atomic_write_text(collection_dir / '_收藏索引.json', json.dumps(payload, ensure_ascii=False, indent=2))
+    _atomic_write_text(page_path, build_saved_collection_markdown(records, report_date))
+    return page_path, len(records)
+
+
 def write_evaluation_failure_audit(items, report_date=None):
     """Record items that could not be evaluated without storing their bodies."""
     failed = [item for item in items if item.get('recommendation_level') == 'evaluation_failed']
@@ -931,7 +1252,7 @@ def build_article_markdown(item, source_cn, source_summary):
     original_paragraphs = clean_body_paragraphs(original_content.splitlines())
     heat = parse_heat(item.get('heat', 0))
     pub_date, pub_dt = parse_publish_datetime(item)
-    pub_time_full = format_publish_datetime(pub_dt)
+    pub_time_full = format_time_display(item)
     metrics = extract_metrics(item)
 
     tags_list = ['新闻', category, f'来源-{source_cn}', f'抓取日期-{TODAY}']
@@ -1086,8 +1407,7 @@ def build_source_index_markdown(source_cn, category, items, source_summary, item
     for item in sorted_items:
         title_zh = item.get('title_zh', item.get('title', ''))
         title_orig = item.get('title', '')
-        _, pub_dt = parse_publish_datetime(item)
-        pub_time_full = format_publish_datetime(pub_dt)
+        pub_time_full = format_time_display(item)
         pub_date, _ = parse_publish_datetime(item)
         filename = build_article_filename(item, pub_date)
         # 索引页和文章在同一目录，用相对路径 ./文件名
@@ -1115,9 +1435,11 @@ def build_source_index_markdown(source_cn, category, items, source_summary, item
     return '\n'.join(lines)
 
 
-def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report_date=None):
+def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report_date=None, read_states=None, saved_states=None):
     """生成每日批次总结页（按信源分段）。"""
     report_date = report_date or TODAY
+    read_states = read_states or {}
+    saved_states = saved_states or {}
     total = sum(len(v) for v in items_by_source_cn.values())
 
     lines = [
@@ -1157,14 +1479,13 @@ def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report
         sorted_src = sorted(src_items, key=lambda x: parse_publish_datetime(x)[1], reverse=True)
         src_metric_cols = collect_metric_columns(sorted_src)
         src_base_cols = ['是否阅读', '发布时间', '中文标题', '推荐等级', '文章总结']
-        src_extra_cols = [c for c in src_metric_cols if c not in src_base_cols]
-        src_headers = src_base_cols + src_extra_cols
+        src_extra_cols = [c for c in src_metric_cols if c not in src_base_cols and c != '是否收藏']
+        src_headers = src_base_cols + src_extra_cols + ['是否收藏']
         src_rows = []
         for item in sorted_src:
             title_zh = item.get('title_zh', item.get('title', ''))
             title_orig = item.get('title', '')
-            _, pub_dt = parse_publish_datetime(item)
-            pub_time_full = format_publish_datetime(pub_dt)
+            pub_time_full = format_time_display(item)
             pub_date, _ = parse_publish_datetime(item)
             filename = build_article_filename(item, pub_date)
             rel_path = encode_markdown_path(f"./信息源/{src_cn}/{filename}")
@@ -1173,8 +1494,11 @@ def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report
             summary_clean = clean_markdown_cell(summary_clean)
             display_title = clean_markdown_cell(title_zh or title_orig)
             metrics = extract_metrics(item)
+            article_key = article_read_key(src_cn, filename)
+            checkbox = '[x]' if read_states.get(article_key) else '[ ]'
+            saved_box = '[x]' if saved_states.get(article_key) else '[ ]'
             row = [
-                '[ ]',
+                checkbox,
                 pub_time_full,
                 f"[{display_title}]({rel_path})",
                 recommendation_level_label(item.get('recommendation_level')),
@@ -1182,6 +1506,7 @@ def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report
             ]
             for c in src_extra_cols:
                 row.append(metrics.get(c, '-'))
+            row.append(saved_box)
             src_rows.append(row)
         lines.extend(markdown_table(src_headers, src_rows))
         lines.append('')
@@ -1240,22 +1565,22 @@ def print_source_fetch_stats(payload):
         )
 
 
-def select_for_ai_fetch(news_items, topics=None, recency_days=7):
+def select_for_ai_fetch(news_items, topics=None, recency_days=7, reject=None, user_profile=None):
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
         from scripts.llm_summarize import select_candidates
     except ModuleNotFoundError:
         from llm_summarize import select_candidates
-    return select_candidates(news_items, topics=topics, recency_days=recency_days)
+    return select_candidates(news_items, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile)
 
 
-def process_ai_snapshots(items, batch_tag, topics=None, recency_days=7):
+def process_ai_snapshots(items, batch_tag, topics=None, recency_days=7, reject=None, user_profile=None):
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
         from scripts.llm_summarize import process_selected_snapshots
     except ModuleNotFoundError:
         from llm_summarize import process_selected_snapshots
-    return process_selected_snapshots(items, batch_tag, topics=topics, recency_days=recency_days)
+    return process_selected_snapshots(items, batch_tag, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile)
 
 
 def fallback_summary(news_items, batch_tag, error):
@@ -1361,11 +1686,11 @@ def parse_frontmatter(text):
 
 def load_existing_articles(root):
     """
-    扫描 Vault 中已有的文章，按 (原文标题, 来源) 去重。
+    扫描 Vault 中已有的文章，按 URL（优先）或 (原文标题, 来源) 去重。
     支持两种结构：
     - 新结构：root/YYYY-MM-DD/信息源/<src>/*.md
     - 旧结构：root/信息源/<src>/*.md（向后兼容）
-    返回 dict: {(原文标题, 来源): 文件路径}
+    返回 dict: {identity_key: 文件路径}
     """
     existing = {}
 
@@ -1394,8 +1719,10 @@ def load_existing_articles(root):
                 fm = parse_frontmatter(text)
                 orig_title = fm.get('原文标题', '')
                 src = fm.get('来源', '')
-                if orig_title and src:
-                    existing[(orig_title, src)] = str(md_path)
+                url = fm.get('链接', '')
+                fake_item = {'title': orig_title, 'url': url}
+                for key in article_identity_keys(fake_item, src):
+                    existing[key] = str(md_path)
             except Exception:
                 continue
     return existing
@@ -1435,6 +1762,7 @@ def load_articles_for_date(date_dir):
                 'url': fm.get('链接', ''),
                 'summary_zh': clean_summary(summary),
                 'published': fm.get('发布时间', date_dir.name),
+                'time_kind': fm.get('时间类型', ''),
                 'fetch_date': fm.get('抓取日期', date_dir.name),
                 'recommendation_level': fm.get('推荐等级', ''),
             }
@@ -1476,8 +1804,15 @@ def summarize_daily(items):
 
 
 def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tech', topics=None,
-                     recency_days=7, evidence_mode='snapshot'):
+                     recency_days=7, evidence_mode='snapshot', dynamic_limit=None):
     batch_tag = f"{TODAY}_{profile}"
+    cfg = load_user_config()
+    if cfg.get('daily_sources'):
+        source_keys = cfg['daily_sources']
+    dynamic_limit = dynamic_limit or cfg.get('limit_per_topic', 3)
+    reject = cfg.get('reject') or []
+    block_patterns = cfg.get('block_url_patterns') or []
+    topics = topics or cfg.get('topics') or None
     vault = Path(vault_path)
     if not vault.exists():
         raise RuntimeError(f"Obsidian Vault 路径不存在: {vault}")
@@ -1495,6 +1830,10 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
     if deep:
         evidence_mode = 'full'
     print(f"AI 抓取证据模式：{evidence_mode}")
+    if topics:
+        print(f"动态兴趣主题：{', '.join(topics)}")
+    else:
+        print("动态兴趣主题：未传入 --topics，将跳过全网动态搜索")
     print(f"{'='*60}")
 
     # Preserve raw platform times so the AI can interpret their semantics before selection.
@@ -1503,7 +1842,32 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
         'limit_per_source': limit,
         'evidence_mode': evidence_mode,
     }
+    if topics:
+        os.environ['NEWS_AGGREGATOR_TOPICS'] = ','.join(topics)
     news_items = fetch_news(source_keys, limit, deep=False, preserve_raw_time=True)
+    
+    # 第三步：如果设置了 topics，自动融合动态全网搜索结果
+    if topics:
+        print(f"\n{'='*60}")
+        print(f"[DynamicSearch] 检测到用户关注主题配置: {topics}")
+        print(f"[DynamicSearch] 开始启动全网动态搜索引擎抓取（每主题限 {dynamic_limit} 条）...")
+        print(f"{'='*60}")
+        try:
+            try:
+                from fetch_dynamic_search import fetch_dynamic_search_news
+            except ModuleNotFoundError:
+                from scripts.fetch_dynamic_search import fetch_dynamic_search_news
+            dynamic_items = fetch_dynamic_search_news(topics, limit_per_topic=dynamic_limit)
+            if dynamic_items:
+                news_items.extend(dynamic_items)
+                print(f"\n[DynamicSearch] 动态搜索成功，共扩充 {len(dynamic_items)} 篇：")
+                for di in dynamic_items:
+                    print(f"  - [{di.get('topic_matched', 'unknown')}] {di.get('title')} ({di.get('url')})")
+            else:
+                print("\n[DynamicSearch] 动态搜索执行完毕，但未检索到任何有效文章。")
+        except Exception as e:
+            print(f"\n[DynamicSearch Warning] 动态全网搜索执行异常: {e}")
+
     pipeline_stats['fetched_count'] = len(news_items)
     news_items = dedupe_items(news_items)
     pipeline_stats['deduped_count'] = len(news_items)
@@ -1518,7 +1882,7 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
         src_orig = item.get('source', 'Unknown')
         key_candidate = src_orig.lower().replace(' ', '').replace("'", '')
         src_cn = get_source_cn(key_candidate, src_orig)
-        if (item.get('title', ''), src_cn) in existing_articles:
+        if article_already_exists(item, existing_articles, src_cn):
             preexisting_skipped += 1
             continue
         if rejection_identity(item) in rejected_history:
@@ -1534,6 +1898,12 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
         f"跳过确定性拒绝 {rejected_history_skipped} 条"
     )
 
+    if cfg.get('block_url_patterns'):
+        before = len(news_items)
+        news_items = apply_zero_cost_rules(news_items, cfg)
+        if len(news_items) < before:
+            print(f"[规则过滤] 进 AI 前按 URL 规则过滤掉 {before - len(news_items)} 条")
+
     if not news_items:
         print("没有抓取到新数据，将使用当天已有文章重建总结。")
         summarized = {'items': [], 'source_summaries': {}, 'batch_summary': ''}
@@ -1541,7 +1911,16 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
     else:
         print("\n开始由 AI 判断时间语义、内容价值和是否值得打开页面...")
         try:
-            selection = select_for_ai_fetch(news_items, topics=topics, recency_days=recency_days)
+            # 从主库读取并提炼一次用户画像（仅读主库 + 写 reports/<日期>/user_profile.md，不写两座 Obsidian 库），
+            # 供候选准入与最终推荐两处判断复用；失败返回空串兜底，不影响本轮按 topics 判断。
+            user_profile = None
+            try:
+                from scripts.llm_summarize import get_user_profile
+            except ModuleNotFoundError:
+                from llm_summarize import get_user_profile
+            user_profile = get_user_profile(max_progress_entries=3)
+
+            selection = select_for_ai_fetch(news_items, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile)
             candidates = [item for item in selection if item.get('ai_selected') is True]
             rejected_selection = []
             for item in selection:
@@ -1578,7 +1957,7 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
             write_json_report(Path('reports') / TODAY / 'evidence_snapshots.json', candidates)
             print("开始基于全文分段证据完成翻译、总结、时间确认和最终质量判断...")
             summarized = process_ai_snapshots(
-                candidates, batch_tag, topics=topics, recency_days=recency_days
+                candidates, batch_tag, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile
             )
         except Exception as error:
             print(f"AI 抓取流程失败，候选将进入待复核审计：{error}", file=sys.stderr)
@@ -1641,10 +2020,9 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
             src_cn = get_source_cn(key_candidate, src_orig)
             title_orig = item.get('title', '')
 
-            # 跨日期去重：如果 Vault 中已有相同原文标题+来源，跳过
-            dup_key = (title_orig, src_cn)
-            if dup_key in existing_articles:
-                print(f"  [跳过] [{src_cn}] {title_orig}（已存在：{existing_articles[dup_key]}）")
+            # 跨日期去重：URL 优先，没有 URL 时退回原文标题+来源
+            if article_already_exists(item, existing_articles, src_cn):
+                print(f"  [跳过] [{src_cn}] {title_orig}（已存在）")
                 skipped_count += 1
                 continue
 
@@ -1687,12 +2065,25 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
     }
 
     daily_path = summary_dir / "今日总结.md"
+    read_states = {}
+    saved_states = {}
+    if daily_path.exists():
+        try:
+            existing_summary = daily_path.read_text(encoding='utf-8')
+            read_states = parse_daily_read_states(existing_summary)
+            saved_states = parse_daily_saved_states(existing_summary)
+        except OSError as error:
+            print(f"读取已有今日总结勾选失败，将全部视为未读：{error}", file=sys.stderr)
     daily_md = build_daily_summary_markdown(
         daily_source_summaries_cn,
         daily_by_source_cn,
+        read_states=read_states,
+        saved_states=saved_states,
     )
     daily_path.write_text(daily_md, encoding='utf-8')
     print(f"\n已生成批次总结：{daily_path}")
+    saved_page, saved_count = write_saved_collection(root)
+    print(f"Obsidian 收藏集合：{saved_page}（{saved_count} 篇）")
 
     total = sum(article_count_per_source.values())
     print(f"\n完成！共 {total} 篇新文章，{len(by_source_cn)} 个来源。")
@@ -1721,6 +2112,7 @@ def main():
                         help='AI 入选后的证据模式，默认 snapshot（完整 DOM 正文，分段审阅）')
     parser.add_argument('--profile', default='tech', help='批次标签')
     parser.add_argument('--topics', help='自定义推荐主题，逗号分隔')
+    parser.add_argument('--dynamic-limit', type=int, default=None, help='动态搜索每主题条数（默认读 user_interests.json limit_per_topic）')
     parser.add_argument('--recency-days', type=int, default=7, help='近多少天内容获得时效优先级')
     args = parser.parse_args()
 
@@ -1736,7 +2128,7 @@ def main():
         parser.error('--recency-days 不能小于 0')
     push_to_obsidian(
         sources, vault_path, args.limit, args.deep, args.profile, topics,
-        args.recency_days, args.evidence_mode,
+        args.recency_days, args.evidence_mode, args.dynamic_limit,
     )
 
 
