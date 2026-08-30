@@ -354,6 +354,24 @@ def _fetch_url_evidence_with_method(url, max_bytes=5 * 1024 * 1024, max_chars=No
     """Return readable article evidence and the method used to obtain it."""
     if not url:
         return "", "feed_metadata"
+    # 视频源优先拿字幕转录（4.8）：bilibili 走 cookie 字幕 API，youtube 暂退化。
+    # 拿到 transcript 时直接当证据注入下游，避免 AI 只看标题/简介盲审。
+    try:
+        from scripts.video_transcribe import is_video_site as _is_video_site, fetch_video_transcript as _fetch_video_transcript
+    except ModuleNotFoundError:
+        from video_transcribe import is_video_site as _is_video_site, fetch_video_transcript as _fetch_video_transcript
+    if _is_video_site(url):
+        transcript = _fetch_video_transcript(url)
+        if _is_readable_text(transcript):
+            return _truncate_evidence(transcript, max_chars) if max_chars is not None else transcript.strip(), "video_transcript"
+        # 字幕拿不到（无字幕/获取失败/空）→ 第 2 级 Groq whisper 兜底，所有视频站统一走此链。
+        try:
+            from scripts.groq_transcribe import transcribe_via_groq as _transcribe_via_groq
+        except ModuleNotFoundError:
+            from groq_transcribe import transcribe_via_groq as _transcribe_via_groq
+        transcript = _transcribe_via_groq(url)
+        if _is_readable_text(transcript):
+            return _truncate_evidence(transcript, max_chars) if max_chars is not None else transcript.strip(), "groq_transcript"
     try:
         content = _fetch_public_url(url, max_bytes=max_bytes)
         text = _extract_article_text(content) if content else ""

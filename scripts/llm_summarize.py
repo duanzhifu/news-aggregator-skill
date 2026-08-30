@@ -2,8 +2,10 @@
 import json
 import os
 import re
+import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 try:
     from scripts.llm_client import call_llm, extract_json_block
@@ -102,7 +104,7 @@ items 数量和顺序必须与输入完全一致，不要输出 JSON 之外的�
 
 
 def _parse_translation_response(raw, expected_count):
-    parsed = json.loads(extract_json_block(raw))
+    parsed = parse_llm_json(raw)
     translated = parsed.get("items") if isinstance(parsed, dict) else parsed
     if not isinstance(translated, list) or len(translated) != expected_count:
         actual = len(translated) if isinstance(translated, list) else 0
@@ -198,15 +200,144 @@ def translate_items(items, batch_size=5, translate_content=True):
     return results
 
 
+def _repair_truncated_json(text):
+    """尽力修复截断的 JSON：截到最后一个完整对象边界，补闭合括号；无法修复返回 None。"""
+    if not text or not text.strip():
+        return None
+    for end in range(len(text), 0, -1):
+        if text[end - 1] == '}':
+            candidate = text[:end]
+            depth_braces = candidate.count('{') - candidate.count('}')
+            depth_brackets = candidate.count('[') - candidate.count(']')
+            if depth_braces == 0 and depth_brackets == 0:
+                try:
+                    return json.loads(candidate)
+                except Exception:
+                    continue
+            if depth_braces >= 0 and depth_brackets >= 0 and depth_braces <= 40:
+                fixed = candidate + ']' * depth_brackets + '}' * depth_braces
+                try:
+                    return json.loads(fixed)
+                except Exception:
+                    continue
+    return None
+
+
+def parse_llm_json(raw, kind='snapshot'):
+    """解析 LLM 输出 JSON；失败时尝试截断修复，仍失败才抛错。"""
+    text = extract_json_block(raw)
+    try:
+        return json.loads(text)
+    except (ValueError, json.JSONDecodeError):
+        repaired = _repair_truncated_json(text)
+        if repaired is not None:
+            return repaired
+        raise
+
+
 def normalize_topics(topics=None):
     if topics is None:
         return list(DEFAULT_RECOMMENDATION_TOPICS)
     return [str(topic).strip() for topic in topics if str(topic).strip()]
 
 
-def build_candidate_selection_prompt(items, topics=None, recency_days=7, now_iso=None):
+# ==== 用户画像：从主库读取并提炼（A 方案：run 时现场提炼一次，全局复用）====
+USER_PROFILE_KB_ROOT = r'D:\Obsidian\智能知识库'
+USER_PROFILE_FILES = [
+    '知识库/个人系统/个人档案.md',
+    '知识库/个人系统/能力地图.md',
+]
+USER_PROFILE_PROGRESS_GLOB = '知识库/个人系统/项目/*/项目进度/*.md'
+
+
+def load_user_profile_materials(max_progress_entries=3, kb_root=USER_PROFILE_KB_ROOT):
+    """读个人档案 + 能力地图 + 最近 N 篇项目进度，返回原始文本（仅读，不写两座库）。
+
+    项目进度按 mtime 取最新 N 篇、自动跨项目；呼应「每 5 篇就沉淀」，取 3 篇不漏且省。
+    """
+    root = Path(kb_root)
+    sections = []
+    for rel in USER_PROFILE_FILES:
+        p = root / rel
+        if p.exists():
+            sections.append(f"# 来源：{rel}\n\n{p.read_text(encoding='utf-8', errors='replace')}")
+    try:
+        progress = sorted(
+            root.glob(USER_PROFILE_PROGRESS_GLOB),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        # 只取「按日进度纪要」格式 YYYY-MM-DD - 标题.md；排除 README 等非流水文件（它们会挤占真实纪要名额）
+        progress = [p for p in progress if re.match(r'\d{4}-\d{2}-\d{2}\s+-', p.name)]
+        progress = progress[:max_progress_entries]
+    except Exception:
+        progress = []
+    for p in progress:
+        rel = p.relative_to(root).as_posix()
+        sections.append(f"# 来源：{rel}\n\n{p.read_text(encoding='utf-8', errors='replace')}")
+    return "\n\n".join(sections)
+
+
+def build_user_profile_prompt(materials):
+    return f"""你是一位用户画像提炼助手。下面是从用户 Obsidian 知识库读到的原始材料（个人档案 + 能力地图 + 最近项目进度）。
+提炼成一段面向「新闻内容判断与推荐决策」的精炼用户画像（1200 字以内，简体中文，分三小节）。
+
+只提取与「判断技术内容是否适合该用户」相关的信号，不要照抄档案表格或能力清单原文：
+- 【我是谁】：阶段、长期目标、已具备/正在用的技术、能力边界。
+- 【我现在做/学什么】：当前核心项目、正在做的事。注意：能力地图里「待验证」项表示该技能还没验证，恰恰是接下来要攻的方向；项目进度是最近讨论/落地的主题。
+- 【我现在需要什么内容】：明确三类都要——（1）概念扫盲/名词解释（如什么是LLM、什么是SDD），（2）与我现在项目强相关的（如 Obsidian 知识库、Claude Code、agent 人格优化），（3）前沿动态。
+
+这份画像将用于：判断候选标题值不值得打开、最终决定是否推荐阅读。因此请写出能让判断更贴合他需求的信号，不要泛泛而谈。
+
+材料：
+{materials}
+
+只输出画像正文，不要其他解释。"""
+
+
+def distill_user_profile(materials):
+    """调 LLM 把知识库材料提炼成一版面向推荐决策的用户画像。"""
+    if not materials.strip():
+        return ""
+    raw = call_llm(
+        [{"role": "system", "content": "你是一位严谨的用户画像提炼助手。"},
+         {"role": "user", "content": build_user_profile_prompt(materials)}],
+        temperature=0.2, max_tokens=3000, json_mode=False,
+    )
+    return (raw or "").strip()
+
+
+def get_user_profile(max_progress_entries=3, snapshot=True):
+    """读材料 → 提炼 → 写当日快照（reports/<日期>/user_profile.md）→ print 到日志 → 返回画像文本。
+
+    一次 run 调一次，结果由下游各判断层复用；失败返回空串兜底，不影响本轮按 topics 判断。
+    """
+    profile = ""
+    try:
+        materials = load_user_profile_materials(max_progress_entries)
+        profile = distill_user_profile(materials)
+    except Exception as e:
+        print(f"[画像] 提炼用户画像失败，本轮仅按 topics 判断：{e}", file=sys.stderr)
+    profile = profile or ""
+    if snapshot and profile:
+        try:
+            snap_dir = Path(__file__).resolve().parent.parent / 'reports' / datetime.now().strftime('%Y-%m-%d')
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            (snap_dir / 'user_profile.md').write_text(profile, encoding='utf-8')
+            print(f"[画像] 已写当日画像快照：{snap_dir / 'user_profile.md'}")
+        except Exception as e:
+            print(f"[画像] 写当日快照失败：{e}", file=sys.stderr)
+    if profile:
+        print(f"[画像] 本次提炼用户画像（{len(profile)}字）：{profile[:120]}...")
+    else:
+        print("[画像] 本轮未提炼到用户画像")
+    return profile
+
+
+def build_candidate_selection_prompt(items, topics=None, recency_days=7, now_iso=None, reject=None, user_profile=None):
     """Ask AI which metadata candidates deserve a page visit."""
     topics_text = ", ".join(normalize_topics(topics)) or "通用前沿技术"
+    reject_text = "、".join(str(r) for r in (reject or [])) or "（无）"
+    profile_text = (user_profile or "").strip()
     now_iso = now_iso or datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     lines = []
     for idx, raw_item in enumerate(items):
@@ -228,6 +359,9 @@ def build_candidate_selection_prompt(items, topics=None, recency_days=7, now_iso
     prompt = f"""你是新闻抓取代理，负责决定哪些候选值得进一步打开页面。
 当前时间（也是所有相对时间的基准）：{now_iso}
 用户关注主题：{topics_text}
+用户明确不想要的类别（即使表面相关也应降级或拒绝）：{reject_text}
+用户画像（此人背景，判断时请结合，别只按字面关键词匹配）：
+{profile_text}
 近期优先参考窗口：{recency_days} 天，但高价值旧文章、当前热榜或持续更新的项目可以保留。
 
 逐条完成：
@@ -236,6 +370,7 @@ def build_candidate_selection_prompt(items, topics=None, recency_days=7, now_iso
 3. 广告、推广、标题党、重复转载、与主题无关或证据明显不足的社交内容应拒绝。
 4. 时间缺失不能单独成为拒绝理由；当前热榜可保留并标记 ranking_observed 或 unknown。
 5. 不得猜测没有证据的日期。无法可靠归一化时 published_at 返回空字符串。
+6. 看清用户画像：他是系统学习者（要概念扫盲/名词解释）、正在搭智能知识库、用 AI 做 agent 优化等；判断候选是否与他当前项目、学习需求或前沿方向相关时，要结合画像理解其真实意图，而不是只按字面关键词命中与否来判。
 
 只输出严格合法 JSON：
 {{"items":[{{"selected":true,"title_zh":"中文标题","selection_reason":"具体理由","rejection_kind":"not_applicable","evidence_points":["标题与用户关注主题直接相关","摘要包含可验证的技术细节"],"published_at":"2026-08-04T09:30:00+08:00","time_kind":"published","time_confidence":"high","time_evidence":"原始字段或页面列表中的证据"}}]}}
@@ -252,7 +387,7 @@ time_kind 只能是 published、updated、repository_last_push、ranking_observe
 
 
 def _parse_candidate_selection(raw, items):
-    parsed = json.loads(extract_json_block(raw))
+    parsed = parse_llm_json(raw)
     entries = parsed.get("items") if isinstance(parsed, dict) else parsed
     if not isinstance(entries, list) or len(entries) != len(items):
         raise ValueError("AI 准入返回数量不匹配")
@@ -303,11 +438,11 @@ def _failed_selection(item, error):
     return enriched
 
 
-def _select_batch(items, topics=None, recency_days=7, was_retried=False, split_depth=0):
+def _select_batch(items, topics=None, recency_days=7, was_retried=False, split_depth=0, reject=None, user_profile=None):
     try:
         raw = call_llm(
-            build_candidate_selection_prompt(items, topics, recency_days),
-            temperature=0.1, max_tokens=3500, json_mode=True,
+            build_candidate_selection_prompt(items, topics, recency_days, reject=reject, user_profile=user_profile),
+            temperature=0.1, max_tokens=6000, json_mode=True,
         )
         return _parse_candidate_selection(raw, items)
     except Exception as error:
@@ -316,20 +451,20 @@ def _select_batch(items, topics=None, recency_days=7, was_retried=False, split_d
         if len(items) > 1 and split_depth == 0:
             middle = len(items) // 2
             return (
-                _select_batch(items[:middle], topics, recency_days, True, 1)
-                + _select_batch(items[middle:], topics, recency_days, True, 1)
+                _select_batch(items[:middle], topics, recency_days, True, 1, reject, user_profile)
+                + _select_batch(items[middle:], topics, recency_days, True, 1, reject, user_profile)
             )
         return [_failed_selection(items[0], error)]
 
 
-def select_candidates(items, batch_size=5, topics=None, recency_days=7):
+def select_candidates(items, batch_size=5, topics=None, recency_days=7, reject=None, user_profile=None):
     """Use metadata and raw source times to decide which pages AI should open."""
     prepared = attach_engagement_scores(attach_source_keys(items))
     results = []
     for i in range(0, len(prepared), batch_size):
         batch = prepared[i:i + batch_size]
         print(f"[AI 抓取] 候选准入批次 {i // batch_size + 1}/{(len(prepared) - 1) // batch_size + 1}，{len(batch)} 条...")
-        results.extend(_select_batch(batch, topics, recency_days))
+        results.extend(_select_batch(batch, topics, recency_days, reject=reject, user_profile=user_profile))
         time.sleep(_batch_delay())
     return results
 
@@ -395,7 +530,7 @@ evidence_points 必须为 1 至 4 条具体事实；没有可验证事实时返�
 
 
 def _parse_full_text_chunk(raw):
-    parsed = json.loads(extract_json_block(raw))
+    parsed = parse_llm_json(raw)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("chunk_summary"), str):
         raise ValueError("全文分块处理返回无效")
     points = parsed.get("evidence_points", [])
@@ -413,7 +548,7 @@ def _process_full_text_chunk(item, chunk, chunk_number, chunk_count, topics):
     try:
         raw = call_llm(
             build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics),
-            temperature=0.1, max_tokens=1200, json_mode=True,
+            temperature=0.1, max_tokens=2000, json_mode=True,
         )
         return _parse_full_text_chunk(raw)
     except Exception as error:
@@ -421,33 +556,35 @@ def _process_full_text_chunk(item, chunk, chunk_number, chunk_count, topics):
         try:
             raw = call_llm(
                 build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics),
-                temperature=0.0, max_tokens=1200, json_mode=True,
+                temperature=0.0, max_tokens=2000, json_mode=True,
             )
             return _parse_full_text_chunk(raw)
         except Exception as retry_error:
             raise RuntimeError(f"第 {chunk_number}/{chunk_count} 段处理失败：{retry_error}") from error
 
 
-def build_snapshot_processing_prompt(items, topics=None, recency_days=7, minimal=False):
+def build_snapshot_processing_prompt(items, topics=None, recency_days=7, minimal=False, reject=None, user_profile=None):
     """Build the final decision from metadata and every article-segment finding."""
     topics_text = ", ".join(normalize_topics(topics)) or "通用前沿技术"
+    reject_text = "、".join(str(r) for r in (reject or [])) or "（无）"
+    profile_text = (user_profile or "").strip()
     lines = []
     for idx, raw_item in enumerate(items):
         item = sanitize_item_for_llm(raw_item)
         evidence = item.get("full_text_findings") or item.get("evidence_snapshot") or item.get("summary") or item.get("description") or ""
         limit = 1200 if minimal else None
         lines.append("\n".join([
-            f"[{idx}] Source: {item.get('source', '')}",
-            f"Original title: {item.get('title', '')}",
-            f"Raw time: {item.get('time') or item.get('published') or ''}",
-            f"Preliminary normalized time: {item.get('published_at', '')}",
-            f"Preliminary time kind/confidence: {item.get('time_kind', 'unknown')}/{item.get('time_confidence', 'unknown')}",
-            f"Snapshot status: {item.get('evidence_status', 'unknown')}",
-            f"Snapshot type: {item.get('evidence_method', 'feed_metadata')}",
+            f"[{idx}] Title: {item.get('title', '')}",
+            f"URL: {item.get('url', '')}",
+            f"Source: {item.get('source', '')}",
             f"Full article findings: {evidence[:limit] if limit else evidence}",
         ]))
     prompt = f"""请基于完整文章所有分段的审阅结论完成最终编辑判断。用户关注主题：{topics_text}，近期优先参考窗口为 {recency_days} 天。
+用户明确不想要的类别（这类内容即使表面相关也应降级为 not_recommended 或 optional，不要判为 strongly_recommended）：{reject_text}
+用户画像（此人背景，判断是否推荐阅读时请结合，别只按字面关键词匹配）：
+{profile_text}
 每一段都已处理；只能使用下方元数据和分段结论中的证据，不得补充没有的实现、实验、因果关系或结论。一次性返回自然中文标题、2 至 3 句中文总结、质量判断及时间确认。明显广告、低价值转载、标题党或全文与标题不符时可在最终阶段拒绝。
+判断推荐等级时请结合用户画像：他是系统学习者（要概念扫盲/名词解释）、正在搭智能知识库、用 AI 做 agent 优化等；若内容与他当前项目、学习需求或前沿方向相关，即使标题不含关键词也应考虑推荐；若只是表面沾边 AI 但实际低价值/无信息量，仍应降级。
 发布时间沿用可验证证据；全文提供更明确时间时可修正初步结果。不得把更新时间或仓库推送时间写成首次发布时间，也不得猜测缺失日期。
 
 只输出严格合法 JSON：
@@ -464,7 +601,7 @@ recommendation_level 只能是 strongly_recommended、optional、not_recommended
 
 
 def _parse_snapshot_processing(raw, items):
-    parsed = json.loads(extract_json_block(raw))
+    parsed = parse_llm_json(raw)
     entries = parsed.get("items") if isinstance(parsed, dict) else parsed
     if not isinstance(entries, list) or len(entries) != len(items):
         raise ValueError("快照处理返回数量不匹配")
@@ -522,11 +659,11 @@ def _failed_snapshot_processing(item, error):
     return enriched
 
 
-def _process_snapshot_batch(items, topics=None, recency_days=7, split_depth=0):
+def _process_snapshot_batch(items, topics=None, recency_days=7, split_depth=0, reject=None, user_profile=None):
     try:
         raw = call_llm(
-            build_snapshot_processing_prompt(items, topics, recency_days),
-            temperature=0.2, max_tokens=4500, json_mode=True,
+            build_snapshot_processing_prompt(items, topics, recency_days, reject=reject, user_profile=user_profile),
+            temperature=0.2, max_tokens=8000, json_mode=True,
         )
         return _parse_snapshot_processing(raw, items)
     except Exception as error:
@@ -535,30 +672,31 @@ def _process_snapshot_batch(items, topics=None, recency_days=7, split_depth=0):
         if len(items) > 1 and split_depth == 0:
             middle = len(items) // 2
             return (
-                _process_snapshot_batch(items[:middle], topics, recency_days, 1)
-                + _process_snapshot_batch(items[middle:], topics, recency_days, 1)
+                _process_snapshot_batch(items[:middle], topics, recency_days, 1, reject, user_profile)
+                + _process_snapshot_batch(items[middle:], topics, recency_days, 1, reject, user_profile)
             )
         try:
             raw = call_llm(
-                build_snapshot_processing_prompt(items, topics, recency_days, minimal=True),
-                temperature=0.1, max_tokens=1200, json_mode=True,
+                build_snapshot_processing_prompt(items, topics, recency_days, minimal=True, reject=reject, user_profile=user_profile),
+                temperature=0.1, max_tokens=2000, json_mode=True,
             )
             return _parse_snapshot_processing(raw, items)
         except Exception as retry_error:
             return [_failed_snapshot_processing(items[0], retry_error)]
 
 
-def _process_full_text_item(item, topics=None, recency_days=7):
+def _process_full_text_item(item, topics=None, recency_days=7, reject=None, user_profile=None):
     """Process every segment before allowing a final article-level decision."""
     evidence = item.get("evidence_snapshot") or ""
     chunks = split_evidence_chunks(evidence)
     if not chunks:
-        return _process_snapshot_batch([item], topics, recency_days)[0]
+        return _process_snapshot_batch([item], topics, recency_days, reject=reject, user_profile=user_profile)[0]
 
     findings = []
-    try:
-        for index, chunk in enumerate(chunks, start=1):
-            print(f"[AI 抓取] 全文分段 {index}/{len(chunks)}...")
+    failed_chunks = 0
+    for index, chunk in enumerate(chunks, start=1):
+        print(f"[AI 抓取] 全文分段 {index}/{len(chunks)}...")
+        try:
             finding = _process_full_text_chunk(item, chunk, index, len(chunks), topics)
             lines = [f"[第 {index}/{len(chunks)} 段] {finding['chunk_summary']}"]
             lines.extend(f"- {point}" for point in finding["evidence_points"])
@@ -566,22 +704,29 @@ def _process_full_text_item(item, topics=None, recency_days=7):
                 lines.append(f"- 时间线索：{finding['time_evidence']}")
             if finding["concerns"]:
                 lines.append(f"- 注意：{finding['concerns']}")
-            findings.append("\n".join(lines))
-    except Exception as error:
-        return _failed_snapshot_processing(item, error)
+        except Exception as error:
+            failed_chunks += 1
+            lines = [f"[第 {index}/{len(chunks)} 段] （本段提取失败：{str(error)[:120]}）",
+                     "- 本段未能提取可靠证据，跳过该段"]
+        findings.append("\n".join(lines))
+
+    if failed_chunks == len(chunks):
+        # 所有段都失败：降级用元数据评估（等价无全文证据），不直接作废
+        print(f"[AI 抓取] {len(chunks)} 段全部提取失败，降级用元数据评估")
+        return _process_snapshot_batch([item], topics, recency_days, reject=reject, user_profile=user_profile)[0]
 
     enriched = dict(item)
     enriched["full_text_findings"] = "\n\n".join(findings)
     enriched["evidence_chunk_count"] = len(chunks)
-    return _process_snapshot_batch([enriched], topics, recency_days)[0]
+    return _process_snapshot_batch([enriched], topics, recency_days, reject=reject, user_profile=user_profile)[0]
 
 
-def process_selected_snapshots(items, batch_tag, batch_size=3, topics=None, recency_days=7):
+def process_selected_snapshots(items, batch_tag, batch_size=3, topics=None, recency_days=7, reject=None, user_profile=None):
     """Finalize selected articles only after processing their complete text."""
     results = []
     for i, item in enumerate(items, start=1):
         print(f"[AI 抓取] 全文处理文章 {i}/{len(items)}...")
-        results.append(_process_full_text_item(item, topics, recency_days))
+        results.append(_process_full_text_item(item, topics, recency_days, reject=reject, user_profile=user_profile))
         time.sleep(_batch_delay())
     for item in results:
         item["batch_tag"] = batch_tag
@@ -610,7 +755,7 @@ def generate_source_summaries(items):
     for item in items:
         by_source.setdefault(item.get("source", "Unknown"), []).append(item)
     try:
-        summaries = json.loads(extract_json_block(call_llm(build_source_summary_prompt(by_source), temperature=0.4, max_tokens=4000, json_mode=True)))
+        summaries = parse_llm_json(call_llm(build_source_summary_prompt(by_source), temperature=0.4, max_tokens=6000, json_mode=True))
     except Exception as error:
         print(f"[LLM Error] 源总结生成失败：{error}")
         summaries = {}

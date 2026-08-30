@@ -66,11 +66,35 @@ try {
         Remove-Item Env:NEWS_AGGREGATOR_BROWSER_PROFILE -ErrorAction SilentlyContinue
         Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Social browser profile not found; using temporary browser sessions."
     }
+    $userInterestsPath = Join-Path $skillRoot 'user_interests.json'
+    $topicsArg = @()
+    $sourceArg = @()
+    $dynamicLimitArg = @()
+    if (Test-Path -LiteralPath $userInterestsPath) {
+        try {
+            $jsonContent = Get-Content -LiteralPath $userInterestsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($jsonContent.topics) {
+                $topicsArg = @('--topics', ($jsonContent.topics -join ','))
+                Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Loaded topics from user_interests.json: $($jsonContent.topics -join ', ')"
+            }
+            if ($jsonContent.daily_sources) {
+                $sourceArg = @('--source', ($jsonContent.daily_sources -join ','))
+                Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Loaded daily_sources from user_interests.json: $($jsonContent.daily_sources -join ', ')"
+            }
+            if ($null -ne $jsonContent.limit_per_topic) {
+                $dynamicLimitArg = @('--dynamic-limit', [string]$jsonContent.limit_per_topic)
+                Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Loaded limit_per_topic from user_interests.json: $($jsonContent.limit_per_topic)"
+            }
+        }
+        catch {
+            Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Failed to parse user_interests.json: $_"
+        }
+    }
+
     $args = @(
         '-u', $pushScript,
-        '--source', 'juejin,devto,github,openai,bilibili,youtube_tech',
         '--limit', '15', '--evidence-mode', 'snapshot', '--vault', $vaultPath
-    )
+    ) + $sourceArg + $topicsArg + $dynamicLimitArg
     $exitCode = Invoke-PythonUtf8 $args
     Write-RunLog "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Export finished with exit code $exitCode."
 }

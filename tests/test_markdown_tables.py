@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.push_to_obsidian import (
+    article_read_key,
     build_article_markdown,
     build_daily_summary_markdown,
     clean_markdown_cell,
@@ -13,14 +14,18 @@ from scripts.push_to_obsidian import (
     fetch_candidate_content,
     get_article_summary,
     is_publishable,
+    parse_daily_read_states,
+    parse_daily_saved_states,
     parse_publish_datetime,
     format_publish_datetime,
+    format_time_display,
     markdown_table,
     write_recommendation_audit,
     load_rejection_index,
     normalized_rejection_kind,
     rejection_identity,
     write_rejection_collection,
+    write_saved_collection,
 )
 
 
@@ -77,6 +82,21 @@ class MarkdownTableTests(unittest.TestCase):
         date_value, dt_value = parse_publish_datetime({"title": "No time", "time": "Today"})
         self.assertEqual("未知", date_value)
         self.assertEqual("发布时间未知", format_publish_datetime(dt_value))
+        self.assertEqual("未知", format_time_display({"title": "No time", "time": "Today"}))
+
+    def test_ranking_observed_displays_as_seen_on_list(self):
+        self.assertEqual("热榜见到", format_time_display({
+            "title": "Repo",
+            "time_kind": "ranking_observed",
+        }))
+
+    def test_published_datetime_still_shows_stamp(self):
+        label = format_time_display({
+            "title": "Post",
+            "time_kind": "published",
+            "published_at": "2026-08-25T15:05:00+08:00",
+        })
+        self.assertEqual("2026-08-25 15:05", label)
 
     def test_source_timestamp_is_preserved(self):
         date_value, dt_value = parse_publish_datetime({"created_at_i": 1760000000})
@@ -245,8 +265,9 @@ class MarkdownTableTests(unittest.TestCase):
             "2026-08-03",
         )
         table_lines = [line for line in markdown.splitlines() if line.startswith('|')]
-        self.assertEqual('| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 |', table_lines[0])
+        self.assertEqual('| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 | 是否收藏 |', table_lines[0])
         self.assertTrue(table_lines[2].startswith('| [ ] |'))
+        self.assertTrue(table_lines[2].rstrip().endswith('| [ ] |'))
         self.assertEqual(table_lines[0].count('|'), table_lines[1].count('|'))
         self.assertEqual(table_lines[0].count('|'), table_lines[2].count('|'))
         self.assertIn("推荐等级", markdown)
@@ -273,6 +294,184 @@ class MarkdownTableTests(unittest.TestCase):
         self.assertIn('[第二篇](', table_rows[1])
         self.assertIn('/Feed/', table_rows[0])
         self.assertIn('/Feed/', table_rows[1])
+
+    def _github_item(self, title_zh, summary="摘要"):
+        return {
+            "title": title_zh,
+            "title_zh": title_zh,
+            "url": "https://github.com/example/repo",
+            "summary_zh": summary,
+            "recommendation_level": "optional",
+        }
+
+    def test_parse_daily_read_states_uses_decoded_link_path(self):
+        filename = "未知-Anthropic官方Claude Code插件目录高Star但需安全注意.md"
+        checked_href = encode_markdown_path(f"./信息源/GitHub Trending/{filename}")
+        unread_href = encode_markdown_path("./信息源/GitHub Trending/未知-另一篇.md")
+        markdown = "\n".join([
+            "| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 |",
+            "| --- | --- | --- | --- | --- |",
+            f"| [x] | 发布时间未知 | [Anthropic官方]({checked_href}) | 可选阅读 | 旧摘要 |",
+            f"| [ ] | 发布时间未知 | [另一篇]({unread_href}) | 可选阅读 | 旧摘要 |",
+        ])
+        states = parse_daily_read_states(markdown)
+        self.assertTrue(states[article_read_key("GitHub Trending", filename)])
+        self.assertFalse(states[article_read_key("GitHub Trending", "未知-另一篇.md")])
+
+    def test_rebuild_daily_summary_preserves_checked_checkbox(self):
+        title = "Anthropic官方Claude Code插件目录高Star但需安全注意"
+        filename = "未知-Anthropic官方Claude Code插件目录高Star但需安全注意.md"
+        old_markdown = "\n".join([
+            "| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 |",
+            "| --- | --- | --- | --- | --- |",
+            f"| [x] | 发布时间未知 | [旧标题]({encode_markdown_path('./信息源/GitHub Trending/' + filename)}) | 可选阅读 | 旧摘要 |",
+        ])
+        rebuilt = build_daily_summary_markdown(
+            {},
+            {"GitHub Trending": [self._github_item(title, "新摘要")]},
+            "2026-08-26",
+            read_states=parse_daily_read_states(old_markdown),
+        )
+        rows = [line for line in rebuilt.splitlines() if line.startswith("| [")]
+        self.assertEqual(1, len(rows))
+        self.assertTrue(rows[0].startswith("| [x] |"))
+        self.assertIn("新摘要", rows[0])
+
+    def test_rebuild_daily_summary_keeps_new_and_unchecked_rows_unread(self):
+        old_title = "已有未读文章"
+        old_filename = "未知-已有未读文章.md"
+        old_markdown = "\n".join([
+            "| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 |",
+            "| --- | --- | --- | --- | --- |",
+            f"| [ ] | 发布时间未知 | [已有未读文章]({encode_markdown_path('./信息源/GitHub Trending/' + old_filename)}) | 可选阅读 | 旧摘要 |",
+        ])
+        rebuilt = build_daily_summary_markdown(
+            {},
+            {"GitHub Trending": [
+                self._github_item(old_title),
+                self._github_item("新来的一篇"),
+            ]},
+            "2026-08-26",
+            read_states=parse_daily_read_states(old_markdown),
+        )
+        rows = [line for line in rebuilt.splitlines() if line.startswith("| [")]
+        self.assertEqual(2, len(rows))
+        self.assertTrue(all(row.startswith("| [ ] |") for row in rows))
+
+    def test_parse_daily_read_states_treats_uppercase_x_as_read(self):
+        href = encode_markdown_path("./信息源/掘金热榜/未知-测试.md")
+        markdown = f"| [X] | 发布时间未知 | [测试]({href}) | 可选阅读 | 摘要 |"
+        states = parse_daily_read_states(markdown)
+        self.assertTrue(states[article_read_key("掘金热榜", "未知-测试.md")])
+
+    def _saved_table(self, filename, read="[x]", saved="[x]", title="Foo"):
+        href = encode_markdown_path(f"./信息源/GitHub Trending/{filename}")
+        return "\n".join([
+            "| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 | 是否收藏 |",
+            "| --- | --- | --- | --- | --- | --- |",
+            f"| {read} | 发布时间未知 | [{title}]({href}) | 可选阅读 | 摘要 | {saved} |",
+        ])
+
+    def test_parse_saved_states_from_last_column(self):
+        filename = "未知-Foo.md"
+        states = parse_daily_saved_states(self._saved_table(filename, read="[ ]", saved="[x]", title="Foo"))
+        key = article_read_key("GitHub Trending", filename)
+        self.assertTrue(states[key])
+        self.assertFalse(parse_daily_read_states(self._saved_table(filename, read="[ ]", saved="[x]"))[key])
+
+    def test_parse_saved_states_missing_column_is_not_saved(self):
+        filename = "未知-Foo.md"
+        href = encode_markdown_path(f"./信息源/GitHub Trending/{filename}")
+        markdown = "\n".join([
+            "| 是否阅读 | 发布时间 | 中文标题 | 推荐等级 | 文章总结 |",
+            "| --- | --- | --- | --- | --- |",
+            f"| [x] | 发布时间未知 | [Foo]({href}) | 可选阅读 | 摘要 |",
+        ])
+        key = article_read_key("GitHub Trending", filename)
+        self.assertFalse(parse_daily_saved_states(markdown)[key])
+        self.assertTrue(parse_daily_read_states(markdown)[key])
+
+    def test_rebuild_daily_summary_preserves_saved_checkbox(self):
+        title = "Anthropic官方Claude Code插件目录高Star但需安全注意"
+        filename = "未知-Anthropic官方Claude Code插件目录高Star但需安全注意.md"
+        old_markdown = self._saved_table(filename, read="[x]", saved="[x]", title="旧标题")
+        rebuilt = build_daily_summary_markdown(
+            {},
+            {"GitHub Trending": [self._github_item(title, "新摘要")]},
+            "2026-08-26",
+            read_states=parse_daily_read_states(old_markdown),
+            saved_states=parse_daily_saved_states(old_markdown),
+        )
+        rows = [line for line in rebuilt.splitlines() if line.startswith("| [")]
+        self.assertEqual(1, len(rows))
+        self.assertTrue(rows[0].startswith("| [x] |"))
+        self.assertTrue(rows[0].rstrip().endswith("| [x] |"))
+        self.assertIn("新摘要", rows[0])
+        self.assertIn("是否收藏", rebuilt)
+
+    def test_write_saved_collection_adds_link_and_first_seen(self):
+        filename = "未知-Foo.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            date_dir = root / "2026-08-26"
+            date_dir.mkdir(parents=True)
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, read="[ ]", saved="[x]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            page, count = write_saved_collection(root, report_date="2026-08-27")
+            self.assertEqual(1, count)
+            text = page.read_text(encoding="utf-8")
+            self.assertIn("2026-08-27", text)
+            self.assertIn(
+                encode_markdown_path(f"../2026-08-26/信息源/GitHub Trending/{filename}"),
+                text,
+            )
+            self.assertIn("Foo 文章", text)
+            index = json.loads((root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8"))
+            record = next(iter(index["records"].values()))
+            self.assertEqual("2026-08-27", record["first_seen"])
+
+    def test_write_saved_collection_removes_unchecked(self):
+        filename = "未知-Foo.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            date_dir = root / "2026-08-26"
+            date_dir.mkdir(parents=True)
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, saved="[x]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            write_saved_collection(root, report_date="2026-08-26")
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, saved="[ ]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            page, count = write_saved_collection(root, report_date="2026-08-27")
+            self.assertEqual(0, count)
+            text = page.read_text(encoding="utf-8")
+            self.assertNotIn("Foo 文章", text)
+            index = json.loads((root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8"))
+            self.assertEqual({}, index["records"])
+
+    def test_write_saved_collection_keeps_first_seen(self):
+        filename = "未知-Foo.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            date_dir = root / "2026-08-26"
+            date_dir.mkdir(parents=True)
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, saved="[x]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            write_saved_collection(root, report_date="2026-08-26")
+            page, count = write_saved_collection(root, report_date="2026-08-27")
+            self.assertEqual(1, count)
+            record = next(iter(json.loads(
+                (root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8")
+            )["records"].values()))
+            self.assertEqual("2026-08-26", record["first_seen"])
+            self.assertIn("| 2026-08-26 |", page.read_text(encoding="utf-8"))
 
     def test_daily_summary_accepts_list_source_summary(self):
         markdown = build_daily_summary_markdown(

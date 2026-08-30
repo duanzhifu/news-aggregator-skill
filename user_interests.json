@@ -1,0 +1,38 @@
+{
+  "topics": [
+    "大模型最新动态",
+    "AI Agent 框架与多智能体协作",
+    "LLM 前沿与模型推理优化",
+    "SDD 规范驱动开发"
+  ],
+  "reject": [
+    "文档导航/目录",
+    "职业指南",
+    "官网首页信息流",
+    "硬件装机",
+    "游戏/生活"
+  ],
+  "daily_sources": [
+    "juejin",
+    "devto",
+    "github",
+    "openai",
+    "bilibili"
+  ],
+  "limit_per_topic": 5,
+  "block_url_patterns": [
+    "/docs/",
+    "/tutorials/",
+    "/blogs/how-to-become"
+  ],
+  "block_hosts": [
+    "en.wikipedia.org",
+    "lazada.co.th",
+    "bnn.in.th",
+    "aws.amazon.com",
+    "hai.stanford.edu",
+    "learn.microsoft.com",
+    "geeksforgeeks.org",
+    "detail.chiebukuro.yahoo.co.jp"
+  ]
+}
