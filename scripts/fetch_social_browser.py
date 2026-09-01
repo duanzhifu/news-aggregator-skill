@@ -4,6 +4,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.request
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import sync_playwright
@@ -235,6 +237,52 @@ def _is_valid_bilibili_title(title):
     return bool(value) and len(value) >= 4 and not STATS_ONLY_TITLE.fullmatch(value)
 
 
+def _bvid_from_url(url):
+    """从 bilibili 视频 URL 提取 bvid，非 bilibili 域或无 bvid 返回空串。"""
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").casefold()
+        if not host.endswith("bilibili.com"):
+            return ""
+        match = re.search(r"/video/(BV\w+)", parsed.path)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return ""
+
+
+def _bilibili_pubtime(url):
+    """经 bilibili view API 拿视频精确发布时间，返回 'YYYY-MM-DD HH:MM:SS' 本地时间。
+
+    匿名可调用（无需 cookie），返回 Unix 时间戳 pubdate；任何失败返回空串。
+    """
+    bvid = _bvid_from_url(url)
+    if not bvid:
+        return ""
+    try:
+        req = urllib.request.Request(
+            f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+                ),
+                "Referer": f"https://www.bilibili.com/video/{bvid}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        return ""
+    pubdate = (payload.get("data") or {}).get("pubdate")
+    if not isinstance(pubdate, int) or pubdate <= 0:
+        return ""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(pubdate))
+
+
 def enrich_bilibili_titles(page, rows):
     """Replace search-card metric text with titles from each video detail page."""
     for row in rows:
@@ -257,6 +305,12 @@ def enrich_bilibili_titles(page, rows):
             continue
         if not _is_valid_bilibili_title(row.get("title", "")):
             row["title"] = ""
+        # 搜索卡片只有相对/残缺时间（"13小时前"/"5分钟"/"08-14"），
+        # 详情页其实带精确发布时间：用 view API 的 pubdate 覆盖，给下游可靠时间依据。
+        pubtime = _bilibili_pubtime(url)
+        if pubtime:
+            row["time"] = pubtime
+            row["time_source"] = "bilibili_view_api"
     return rows
 
 

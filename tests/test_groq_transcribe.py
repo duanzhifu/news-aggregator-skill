@@ -76,5 +76,33 @@ class TestTranscribeViaGroq(unittest.TestCase):
             self.assertEqual(gt.transcribe_via_groq("https://x/v"), "")
 
 
+class TestTranscribeLocalFile(unittest.TestCase):
+    def setUp(self):
+        self._patches = [
+            mock.patch.object(gt, "_groq_api_key", return_value="gsk_test"),
+        ]
+        for p in self._patches:
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_missing_file(self):
+        self.assertEqual(gt.transcribe_local_file("Z:\\不存在\\视频.mp4"), "")
+
+    def test_no_key(self):
+        with mock.patch.object(gt, "_groq_api_key", return_value=""):
+            self.assertEqual(gt.transcribe_local_file("C:\\fake.mp4"), "")
+
+    def test_extract_failure(self):
+        with mock.patch.object(gt, "_extract_audio_local", return_value=None):
+            self.assertEqual(gt.transcribe_local_file("C:\\fake.mp4"), "")
+
+    def test_success(self):
+        d, p = _tmp_mp3(100)
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
+        with mock.patch.object(gt, "_extract_audio_local", return_value=p), \
+             mock.patch.object(gt, "_post_audio_to_groq", return_value="转写正文"):
+            self.assertEqual(gt.transcribe_local_file(p), "转写正文")
+
+
 if __name__ == "__main__":
     unittest.main()

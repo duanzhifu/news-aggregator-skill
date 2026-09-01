@@ -270,5 +270,77 @@ class SocialPlatformTests(unittest.TestCase):
         self.assertFalse(fetch_social_browser._is_valid_bilibili_title("259 0 15:12:11"))
 
 
+class BilibiliPubtimeTests(unittest.TestCase):
+    def test_bvid_extracted_from_video_url(self):
+        self.assertEqual(
+            "BV1KHtH61Efm",
+            fetch_social_browser._bvid_from_url("https://www.bilibili.com/video/BV1KHtH61Efm/"),
+        )
+        self.assertEqual(
+            "BV1KHtH61Efm",
+            fetch_social_browser._bvid_from_url(
+                "https://www.bilibili.com/video/BV1KHtH61Efm?vd_source=abc#reply123"
+            ),
+        )
+
+    def test_bvid_rejects_non_bilibili_host(self):
+        self.assertEqual(
+            "", fetch_social_browser._bvid_from_url("https://www.douyin.com/video/12345678")
+        )
+        self.assertEqual("", fetch_social_browser._bvid_from_url("https://example.com/video/BV123"))
+
+    def test_bvid_returns_empty_without_video_path(self):
+        self.assertEqual("", fetch_social_browser._bvid_from_url("https://www.bilibili.com/cheese/play/ep123"))
+
+    def test_pubtime_converts_unix_timestamp_to_local_datetime(self):
+        payload = json.dumps({"code": 0, "data": {"pubdate": 1788089887}}).encode("utf-8")
+        with patch.object(
+            fetch_social_browser.urllib.request, "urlopen", return_value=_FakeResp(payload)
+        ):
+            result = fetch_social_browser._bilibili_pubtime(
+                "https://www.bilibili.com/video/BV1KHtH61Efm/"
+            )
+        # pubdate=1788089887 在 UTC+8 下应为 2026-08-30 19:38:07
+        self.assertTrue(
+            result.endswith(" 19:38:07"),
+            f"expected UTC+8 local time, got {result!r}",
+        )
+        self.assertTrue(result.startswith("2026-08-30 "), result)
+
+    def test_pubtime_returns_empty_on_error_code(self):
+        payload = json.dumps({"code": -400, "message": "请求错误"}).encode("utf-8")
+        with patch.object(
+            fetch_social_browser.urllib.request, "urlopen", return_value=_FakeResp(payload)
+        ):
+            self.assertEqual(
+                "", fetch_social_browser._bilibili_pubtime("https://www.bilibili.com/video/BV1KHtH61Efm/")
+            )
+
+    def test_pubtime_returns_empty_on_network_failure(self):
+        with patch.object(
+            fetch_social_browser.urllib.request, "urlopen", side_effect=OSError("boom")
+        ):
+            self.assertEqual(
+                "", fetch_social_browser._bilibili_pubtime("https://www.bilibili.com/video/BV1KHtH61Efm/")
+            )
+
+    def test_pubtime_returns_empty_without_bvid(self):
+        self.assertEqual("", fetch_social_browser._bilibili_pubtime("https://www.bilibili.com/cheese/play/ep123"))
+
+
+class _FakeResp:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
 if __name__ == "__main__":
     unittest.main()

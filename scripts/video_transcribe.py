@@ -189,6 +189,58 @@ def _fetch_bilibili_transcript(bvid: str) -> str:
     return "\n".join(parts)
 
 
+def _fetch_bilibili_segments(bvid: str):
+    """拿一条 bilibili 视频的中文字幕分段（带 from/to 时间戳）。
+
+    复用 _fetch_bilibili_transcript 的 API 流程；返回 [{start, end, text}, ...]。
+    失败/无字幕 → 返回 []。
+    """
+    cookie = _get_bilibili_cookie()
+    if not cookie:
+        return []
+    try:
+        view = _api_get(
+            f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}",
+            cookie, f"https://www.bilibili.com/video/{bvid}",
+        )
+        if view.get("code") != 0:
+            return []
+        cid = view["data"]["cid"]
+        sub = _api_get(
+            f"https://api.bilibili.com/x/player/wbi/v2?bvid={bvid}&cid={cid}",
+            cookie, f"https://www.bilibili.com/video/{bvid}",
+        )
+    except Exception as e:
+        print(f"[视频转录] B 站 API 失败({bvid})：{e}", file=sys.stderr)
+        return []
+
+    subs = (sub.get("data") or {}).get("subtitle", {}).get("subtitles", [])
+    if not subs:
+        return []
+    target = next((s for s in subs if s.get("lan") == "ai-zh"), subs[0])
+    sub_url = target.get("subtitle_url", "")
+    if sub_url.startswith("//"):
+        sub_url = "https:" + sub_url
+    if not sub_url:
+        return []
+    try:
+        body = _api_get(sub_url, cookie, f"https://www.bilibili.com/video/{bvid}")
+    except Exception as e:
+        print(f"[视频转录] B 站字幕内容获取失败({bvid})：{e}", file=sys.stderr)
+        return []
+
+    segs = []
+    for x in body.get("body", []):
+        c = x.get("content")
+        if not c:
+            continue
+        c = str(c).strip()
+        if not c:
+            continue
+        segs.append({"start": x.get("from", 0.0), "end": x.get("to", 0.0), "text": c})
+    return segs
+
+
 def fetch_video_transcript(url: str, source_hint: str = None) -> str:
     """统一入口：从视频 URL 提取 transcript 文本。
 
@@ -208,3 +260,23 @@ def fetch_video_transcript(url: str, source_hint: str = None) -> str:
         return _fetch_bilibili_transcript(bvid)
     # youtube.com / youtu.be：暂不接（数据中心 IP 被反爬），退化到 DOM 简介
     return ""
+
+
+def fetch_video_transcript_segments(url: str, source_hint: str = None):
+    """统一入口：从视频 URL 提取带时间戳的字幕分段列表 [{start,end,text},...]。
+
+    仅 bilibili 支持（字幕 JSON 自带 from/to）；其它平台返回 []。
+    失败/无字幕 → 返回 []（绝不抛异常）。
+    """
+    if not url:
+        return []
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower()
+    except Exception:
+        return []
+    if host.endswith("bilibili.com"):
+        bvid = _extract_bvid(url)
+        if not bvid:
+            return []
+        return _fetch_bilibili_segments(bvid)
+    return []

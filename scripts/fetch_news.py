@@ -298,11 +298,68 @@ def _truncate_evidence(text, max_chars):
     return text[:cut if cut > 0 else max_chars].strip()
 
 
+def _collapse_lines(text):
+    """Collapse consecutive blank lines and strip each line."""
+    cleaned = []
+    previous_empty = False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            if not previous_empty:
+                cleaned.append('')
+            previous_empty = True
+            continue
+        previous_empty = False
+        cleaned.append(line)
+    return '\n'.join(cleaned).strip()
+
+
+# 借鉴 Firecrawl 的 EXCLUDE_NON_MAIN_TAGS（apps/api/native/src/html.rs）：
+# 按 class/id 剔除广告、cookie、社交分享、侧栏、弹窗、面包屑、导航等非正文块。
+# 故意不收 .top / .bottom（太通用，易误杀正文）与 .***（语义不明）。
+_BOILERPLATE_SELECTORS = (
+    ".ad", ".ads", ".advert", "#ad",
+    ".cookie", "#cookie",
+    ".social", ".social-media", ".social-links", "#social",
+    ".share", "#share",
+    ".widget", "#widget",
+    ".sidebar", ".side", ".aside", "#sidebar",
+    ".modal", ".popup", "#modal", ".overlay",
+    ".breadcrumbs", "#breadcrumbs",
+    ".navigation", ".menu", ".navbar", "#nav",
+    ".lang-selector", "#language-selector", ".language",
+)
+
+
 def _extract_article_text(html_content):
-    """Extract the most likely article container before falling back to body text."""
+    """Extract main article text: trafilatura first, BeautifulSoup fallback, never whole-body junk."""
+    # 1) 主提取：trafilatura 只留正文（去导航/广告/页脚，同 Firecrawl 的 main-content 思路）。
+    #    输出 Markdown：保留标题/列表/代码块结构，便于笔记正文「## 原文正文」在 Obsidian 里正确渲染。
+    #    （A/B 实测 Markdown 较现状 -13%，仅比纯文本 txt 多约 3% 结构字符，换取结构收益。）
+    try:
+        import trafilatura
+        text = trafilatura.extract(
+            html_content,
+            output_format='markdown',
+            include_comments=False,
+            include_tables=True,
+            favor_precision=True,
+        )
+        if text and _is_readable_text(text):
+            return _collapse_lines(text)
+    except Exception:
+        pass  # 依赖缺失/解析异常 → 走下方 BeautifulSoup 兜底
+
+    # 2) 兜底：BeautifulSoup 选正文容器；一个都不命中就返回空串，
+    #    交给上层 _fetch_url_evidence_with_method 触发 Playwright 重试 / 标记 insufficient，
+    #    不再退回整页全文（避免导航/广告/相关推荐混进证据喂给 LLM 白烧 token）。
     soup = BeautifulSoup(html_content, 'html.parser')
     for element in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
         element.decompose()
+    # 借鉴 Firecrawl：按 class/id 再剔广告/侧栏/弹窗/分享/cookie 等非正文块（仅兜底路径）。
+    for selector in _BOILERPLATE_SELECTORS:
+        for element in soup.select(selector):
+            element.decompose()
     selectors = (
         "article", "main", "[role='main']", ".article-content", ".post-content",
         ".entry-content", ".markdown-body", ".prose", ".content",
@@ -313,20 +370,9 @@ def _extract_article_text(html_content):
             text = node.get_text(separator='\n', strip=True)
             if text:
                 candidates.append(text)
-    text = max(candidates, key=len) if candidates else soup.get_text(separator='\n', strip=True)
-    lines = [line.strip() for line in text.splitlines()]
-    cleaned = []
-    previous_empty = False
-    for line in lines:
-        if not line:
-            if not previous_empty:
-                cleaned.append('')
-            previous_empty = True
-            continue
-        previous_empty = False
-        cleaned.append(line)
-    full_text = '\n'.join(cleaned).strip()
-    return full_text
+    if not candidates:
+        return ""
+    return _collapse_lines(max(candidates, key=len))
 
 
 def fetch_url_content(url):
