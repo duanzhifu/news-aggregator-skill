@@ -20,11 +20,13 @@
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 # 允许以 `py scripts\\video_to_article.py` 从 skill 根目录运行（scripts/ 已在 sys.path）
 try:
@@ -40,6 +42,11 @@ DEFAULT_OUT = r"D:\Obsidian\自动信息获取\视频整理"
 _VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".flv", ".wmv", ".ts", ".webm", ".m4v"}
 _CHUNK_CHARS = 8000
 _SINGLE_CALL_CHARS = 14000
+
+# 去重：处理索引（脚本同目录 processed_index.json）+ 精确指纹 + 语义近似
+INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "processed_index.json")
+_SIMHASH_BITS = 64
+_SIMHASH_THRESHOLD = 8  # simhash 汉明距离 ≤ 8 判「内容高度重合」（字符 trigram 粒度）
 
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\r\n\t]')
 _SECTION_RE = re.compile(r'^##\s+(.+?)\s*（(\d{1,2}:\d{2}(?::\d{2})?)）\s*$')
@@ -546,9 +553,133 @@ def _assemble_article(article, mindmap, outline, transcript_callout):
     return "\n".join(parts)
 
 
+# -------------------- 去重 --------------------
+
+def _normalize_url(url):
+    """URL 规范化：去 utm_* 参数、去锚点，query 排序。用于 URL 型指纹键。"""
+    try:
+        p = urllib.parse.urlsplit(url.strip())
+        query = urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+        query = [(k, v) for k, v in query if not k.lower().startswith("utm_")]
+        query.sort()
+        return urllib.parse.urlunsplit(
+            (p.scheme.lower(), p.netloc.lower(), p.path.rstrip("/"),
+             urllib.parse.urlencode(query), "")
+        )
+    except Exception:
+        return url.strip().rstrip("/")
+
+
+def _probe_duration(video_path):
+    """ffprobe 取视频时长（秒）；失败返回 None。"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, timeout=30, check=True)
+        return float(r.stdout.decode("utf-8", "replace").strip())
+    except Exception:
+        return None
+
+
+def _first_frame_hash(video_path):
+    """ffmpeg 抽首帧 PNG → md5 前 16 位；失败返回 None。"""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", video_path, "-frames:v", "1",
+             "-f", "image2pipe", "-vcodec", "png", "-"],
+            capture_output=True, timeout=60, check=True)
+        return hashlib.md5(r.stdout).hexdigest()[:16] if r.stdout else None
+    except Exception:
+        return None
+
+
+def _fingerprint_key(target):
+    """精确指纹键：本地文件 = 大小+时长+首帧hash；URL = 规范化 URL。
+
+    重拷贝/改名不改变内容指纹；首帧/时长拿不到返回 None（跳过精确查重，避免误判）。
+    """
+    if os.path.isfile(target):
+        size = os.path.getsize(target)
+        dur = _probe_duration(target)
+        fh = _first_frame_hash(target)
+        if dur is None or fh is None:
+            return None
+        return f"local:{size}:{dur:.3f}:{fh}"
+    return "url:" + _normalize_url(target)
+
+
+def _load_index():
+    try:
+        with open(INDEX_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_index(index):
+    try:
+        tmp = INDEX_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, INDEX_PATH)
+    except Exception as e:
+        print(f"  [索引] 写失败：{e}", file=sys.stderr)
+
+
+def _find_exact_duplicate(target):
+    """精确指纹查重：命中返回索引记录 dict（含 output_md），未命中返回 None。"""
+    key = _fingerprint_key(target)
+    if key is None:
+        return None
+    rec = _load_index().get("records", {}).get(key)
+    return rec if isinstance(rec, dict) else None
+
+
+def _simhash(text, bits=_SIMHASH_BITS):
+    """无依赖 simhash：去空白后字符 3-gram 特征，md5 散列加权。返回整数。"""
+    t = re.sub(r"\s+", "", text or "")
+    if not t:
+        return 0
+    if len(t) < 3:
+        t = (t + "\u3000\u3000")[:3]
+    v = [0] * bits
+    for i in range(len(t) - 2):
+        h = int(hashlib.md5(t[i:i + 3].encode("utf-8")).hexdigest()[:16], 16)
+        for b in range(bits):
+            v[b] += 1 if (h >> b) & 1 else -1
+    out = 0
+    for b in range(bits):
+        if v[b] > 0:
+            out |= 1 << b
+    return out
+
+
+def _hamming(a, b):
+    return bin(a ^ b).count("1")
+
+
+def _find_semantic_duplicates(index, topic, simhash_val):
+    """同专题内 simhash 近似查重，返回 [(hamming距离, 记录)]，按距离升序。"""
+    hits = []
+    for rec in index.get("records", {}).values():
+        if rec.get("topic") != topic:
+            continue
+        rsh = rec.get("simhash")
+        if not rsh or not isinstance(rsh, str):
+            continue
+        dist = _hamming(simhash_val, int(rsh, 16))
+        if dist <= _SIMHASH_THRESHOLD:
+            hits.append((dist, rec))
+    hits.sort(key=lambda x: x[0])
+    return hits
+
+
 # -------------------- 落盘 --------------------
 
-def _write_article(topic_dir, article, title, source_label, method, today, topic):
+def _write_article(topic_dir, article, title, source_label, method, today, topic, dup_warning=None):
     os.makedirs(topic_dir, exist_ok=True)
     fname = f"{today} - {_sanitize_title(title)}.md"
     path = os.path.join(topic_dir, fname)
@@ -561,6 +692,8 @@ def _write_article(topic_dir, article, title, source_label, method, today, topic
         f'整理日期: {_yaml_str(today)}\n'
         "---\n\n"
     )
+    if dup_warning:
+        front += dup_warning + "\n"
     with open(path, "w", encoding="utf-8") as f:
         f.write(front + article.strip() + "\n")
     return path
@@ -568,8 +701,15 @@ def _write_article(topic_dir, article, title, source_label, method, today, topic
 
 # -------------------- 单条处理 --------------------
 
-def _process_one(target, topic, out_root, do_frames, today):
-    """处理单个视频，返回输出文件路径；致命失败抛异常。"""
+def _process_one(target, topic, out_root, do_frames, today, force=False):
+    """处理单个视频，返回输出文件路径；精确查重命中（非 force）返回 None（跳过）；致命失败抛异常。"""
+    # ① 精确指纹查重（同一视频重复生成）
+    if not force:
+        dup = _find_exact_duplicate(target)
+        if dup:
+            print(f"  [去重] 已处理过：{dup.get('output_md', '?')}（{dup.get('processed_at', '?')}），跳过。--force 可重跑。",
+                  file=sys.stderr)
+            return None
     print(f"  [转录] {target}", file=sys.stderr)
 
     segments, method = _get_segments(target)
@@ -582,6 +722,19 @@ def _process_one(target, topic, out_root, do_frames, today):
         if not transcript:
             raise RuntimeError("无法获得转录文本（字幕 API 与 Groq whisper 均失败，或音频超 25MB）")
     print(f"  [转录] 成功（{method}，{len(transcript)} 字，时间点={'有' if has_ts else '无'}）", file=sys.stderr)
+
+    # ② 语义近似查重（同专题内 simhash，只提示不阻断）
+    dup_warning = None
+    sem = _find_semantic_duplicates(_load_index(), topic, _simhash(transcript))
+    if sem:
+        dist, rec = sem[0]
+        dup_warning = (
+            "> [!warning] 内容重合提示\n"
+            f"> 本视频转录与《{rec.get('title', '?')}》高度重合"
+            f"（相似度 hamming={dist}，产物：{rec.get('output_md', '?')}，{rec.get('processed_at', '?')}）。"
+            "如确认是同一课程的不同来源，请删除本篇重复内容。\n"
+        )
+        print(f"  [去重] ⚠ 与已生成文章高度重合：{rec.get('output_md', '?')}", file=sys.stderr)
 
     print("  [成文] 生成文章…", file=sys.stderr)
     article = _generate_article(transcript, target, has_ts)
@@ -612,8 +765,22 @@ def _process_one(target, topic, out_root, do_frames, today):
     callout = _build_transcript_callout(segments, transcript, has_ts)
     final = _assemble_article(article, mindmap, outline, callout)
 
-    path = _write_article(topic_dir, final, title, target, method, today, topic)
+    path = _write_article(topic_dir, final, title, target, method, today, topic, dup_warning)
     print(f"  [落盘] {path}", file=sys.stderr)
+
+    # ③ 写处理索引（成功才记录；force 重跑时覆盖旧记录）
+    key = _fingerprint_key(target)
+    if key:
+        idx = _load_index()
+        idx.setdefault("records", {})[key] = {
+            "kind": "local" if os.path.isfile(target) else "url",
+            "topic": topic,
+            "title": title,
+            "output_md": path,
+            "processed_at": today,
+            "simhash": f"{_simhash(transcript):016x}",
+        }
+        _save_index(idx)
     return path
 
 
@@ -639,6 +806,7 @@ def main(argv=None):
     ap.add_argument("--topic", default=None, help="专题名（默认：批量=文件夹名；单文件=父文件夹名；URL=网络视频）")
     ap.add_argument("--no-frames", action="store_true", help="不抽截图")
     ap.add_argument("--net-frames", action="store_true", help="网络视频也抽截图（暂未实现，接受但跳过）")
+    ap.add_argument("--force", action="store_true", help="已处理过的视频强制重跑，并更新处理索引")
     args = ap.parse_args(argv)
 
     target = args.target.strip()
@@ -660,14 +828,20 @@ def main(argv=None):
         topic = args.topic or os.path.basename(os.path.normpath(target))
         print(f"批量处理：{len(videos)} 个视频，专题=「{topic}」", file=sys.stderr)
         failed = []
+        skipped = 0
         for i, v in enumerate(videos, 1):
             print(f"\n[{i}/{len(videos)}] {os.path.basename(v)}", file=sys.stderr)
             try:
-                _process_one(v, topic, args.out, not args.no_frames, today)
+                out = _process_one(v, topic, args.out, not args.no_frames, today, args.force)
+                if out is None:
+                    skipped += 1
             except Exception as e:
                 failed.append((v, str(e)))
                 print(f"  [失败] {e}", file=sys.stderr)
-        print(f"\n批量完成：成功 {len(videos) - len(failed)} / 失败 {len(failed)}", file=sys.stderr)
+        made = len(videos) - len(failed) - skipped
+        print(f"\n批量完成：新建 {made} / 跳过(已处理) {skipped} / 失败 {len(failed)}", file=sys.stderr)
+        if skipped:
+            print(f"  （{skipped} 个已处理过被跳过，--force 可重跑）", file=sys.stderr)
         for v, err in failed:
             print(f"  失败：{os.path.basename(v)} -> {err}", file=sys.stderr)
         return 0 if not failed else 1
@@ -678,10 +852,13 @@ def main(argv=None):
     else:
         topic = args.topic or "网络视频"
     try:
-        path = _process_one(target, topic, args.out, not args.no_frames, today)
+        path = _process_one(target, topic, args.out, not args.no_frames, today, args.force)
     except Exception as e:
         print(f"错误：{e}", file=sys.stderr)
         return 1
+    if path is None:
+        print("已处理过，跳过（--force 可重跑）。", file=sys.stderr)
+        return 0
     print(path)
     return 0
 

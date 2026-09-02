@@ -285,9 +285,12 @@ def get_category(source_key):
 
 
 def sanitize_filename(text, max_len=80):
-    """生成安全文件名：先解码 HTML 实体与 URL 编码，再移除 Windows 非法字符。
+    """生成安全文件名：解码 HTML 实体与 URL 编码，再把会破坏 Obsidian 链接的字符替换成空格。
 
-    方案 B：同时处理 HTML 实体（如 &quot; → "）和 URL 编码（如 %20 → 空格）。
+    保留：字母、数字、空格、-、_、. 以及所有非 ASCII 字符（中文与全角标点）。
+    替换成空格：其余 ASCII 符号（# ^ % [ ] ( ) + & = 等）与全角冒号 ：。
+    这样文件名不再含 Obsidian 链接语法会误判的特殊字符，今日总结表格里的
+    [标题](路径) 链接才能可靠跳转。
     """
     if not text:
         return 'untitled'
@@ -296,8 +299,9 @@ def sanitize_filename(text, max_len=80):
     text = html.unescape(text)
     # 2. 解码 URL 编码
     text = unquote(text)
-    # 3. 移除 Windows 文件名非法字符
-    text = re.sub(r'[\\/:*?"<>|：]', '', text)
+    # 3. 会破坏 Obsidian 链接/URL 编码的 ASCII 符号与全角冒号 → 空格（保留 - _ .）
+    text = re.sub(r'[!"#$%&\'()*+,/:;<=>?@\[\\\]^`{|}~：]', ' ', text)
+    # 4. 折叠连续空白
     text = re.sub(r'\s+', ' ', text)
     text = text.strip(' .')
     if len(text) > max_len:
@@ -496,6 +500,16 @@ def clean_markdown_cell(value, max_length=None):
     if max_length and len(text) > max_length:
         text = text[:max_length - 1].rstrip() + '…'
     return text or '-'
+
+
+def escape_link_title(title):
+    """转义链接显示文字里会被 Obsidian 当作 tag 的 #（如 #19 → \\#19）。
+
+    Obsidian 会把链接显示文字 [文字](url) 中紧跟空格/行首的 # 渲染成紫色
+    tag 徽章，并把一条链接从中间截断（只有徽章前部分可点）。转义后 # 按
+    普通字符显示，链接保持完整可点。
+    """
+    return str(title or '').replace('#', '\\#')
 
 
 def encode_markdown_path(path):
@@ -1417,8 +1431,8 @@ def build_source_index_markdown(source_cn, category, items, source_summary, item
         summary_clean = clean_summary(summary_zh)
         # 关键：去掉所有可能破坏表格的字符
         summary_clean = summary_clean.replace('|', '/').replace('\n', ' ').replace('\r', ' ')
-        # 显示用的标题也做同样清理（避免破坏表格）
-        display_title = (title_zh or title_orig).replace('|', '/').replace('\n', ' ').replace('\r', ' ')
+        # 显示用的标题也做同样清理（避免破坏表格），并转义 # 防 Obsidian 渲染成 tag
+        display_title = escape_link_title((title_zh or title_orig).replace('|', '/').replace('\n', ' ').replace('\r', ' '))
         # 文件路径里的空格需要编码，管道符不允许
         safe_rel_path = rel_path.replace('|', '/').replace(' ', '%20')
         metrics = extract_metrics(item)
@@ -1492,7 +1506,7 @@ def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report
             summary_zh = get_article_summary(item)
             summary_clean = clean_summary(summary_zh)
             summary_clean = clean_markdown_cell(summary_clean)
-            display_title = clean_markdown_cell(title_zh or title_orig)
+            display_title = escape_link_title(clean_markdown_cell(title_zh or title_orig))
             metrics = extract_metrics(item)
             article_key = article_read_key(src_cn, filename)
             checkbox = '[x]' if read_states.get(article_key) else '[ ]'

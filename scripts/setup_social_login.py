@@ -11,6 +11,7 @@ DEFAULT_PROFILE = Path(r"D:\news-aggregator-browser-profile")
 PLATFORM_URLS = {
     "douyin": "https://www.douyin.com/",
     "bilibili": "https://www.bilibili.com/",
+    "bing": "https://www.bing.com/",
 }
 BROWSER_CHANNELS = {"edge": "msedge", "chromium": None}
 

@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import urllib.parse
@@ -14,6 +15,22 @@ except ImportError:
     sys.exit(1)
 
 
+DEFAULT_PROFILE = r"D:\news-aggregator-browser-profile"
+
+
+def _configured_profile():
+    """Return the persistent profile dir if it exists, else None.
+
+    Prefers the NEWS_AGGREGATOR_BROWSER_PROFILE env var (set by run_daily.ps1),
+    falling back to the default login-profile path. Reusing the logged-in
+    profile is what makes Bing treat the request as a trusted user instead of
+    an anonymous bot (which is the root cause of 中文短语拆词垃圾).
+    """
+    value = os.environ.get("NEWS_AGGREGATOR_BROWSER_PROFILE", "").strip()
+    profile = os.path.abspath(os.path.expanduser(value or DEFAULT_PROFILE))
+    return profile if os.path.isdir(profile) else None
+
+
 def fetch_search_results_bing(keyword: str, limit: int = 5) -> list:
     encoded_kw = urllib.parse.quote(keyword)
     search_url = f"https://www.bing.com/search?q={encoded_kw}"
@@ -23,30 +40,50 @@ def fetch_search_results_bing(keyword: str, limit: int = 5) -> list:
 
     with sync_playwright() as p:
         browser = None
-        for channel in ['msedge', 'chrome', None]:
-            try:
-                launch_args = {"headless": True}
-                if channel:
-                    launch_args["channel"] = channel
-                browser = p.chromium.launch(**launch_args)
-                break
-            except Exception:
-                continue
+        context = None
+        profile = _configured_profile()
 
-        if not browser:
-            browser = p.chromium.launch(headless=True)
+        # 优先复用登录态 profile（Bing 识别为可信用户 → 不拆词）。
+        if profile:
+            for channel in ['msedge', 'chrome', None]:
+                try:
+                    launch_args = {
+                        "headless": True,
+                        "args": ["--disable-blink-features=AutomationControlled"],
+                    }
+                    if channel:
+                        launch_args["channel"] = channel
+                    context = p.chromium.launch_persistent_context(profile, **launch_args)
+                    break
+                except Exception:
+                    context = None
+                    continue
 
-        context = browser.new_context(
-            locale="zh-CN",
-            timezone_id="Asia/Shanghai",
-            extra_http_headers={"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.5"},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1280, "height": 800},
-        )
+        # 退回匿名 headless（profile 不存在或启动失败）。
+        if context is None:
+            for channel in ['msedge', 'chrome', None]:
+                try:
+                    launch_args = {"headless": True}
+                    if channel:
+                        launch_args["channel"] = channel
+                    browser = p.chromium.launch(**launch_args)
+                    break
+                except Exception:
+                    continue
+            if not browser:
+                browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai",
+                extra_http_headers={"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.5"},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+            )
+
         page = context.new_page()
 
         try:
@@ -82,7 +119,10 @@ def fetch_search_results_bing(keyword: str, limit: int = 5) -> list:
         except Exception as e:
             print(f"[BingSearch Error] 抓取 Bing 失败: {e}", file=sys.stderr)
         finally:
-            browser.close()
+            if context:
+                context.close()
+            if browser:
+                browser.close()
 
     return results
 
