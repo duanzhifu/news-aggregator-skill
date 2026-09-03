@@ -430,7 +430,8 @@ class MarkdownTableTests(unittest.TestCase):
             self.assertIn("Foo 文章", text)
             index = json.loads((root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8"))
             record = next(iter(index["records"].values()))
-            self.assertEqual("2026-08-27", record["first_seen"])
+            # 2026-09-03 拍板：first_seen = 首次观察到 [x] 的扫描日 - 1（近似真实勾选日）
+            self.assertEqual("2026-08-26", record["first_seen"])
 
     def test_write_saved_collection_removes_unchecked(self):
         filename = "未知-Foo.md"
@@ -470,8 +471,9 @@ class MarkdownTableTests(unittest.TestCase):
             record = next(iter(json.loads(
                 (root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8")
             )["records"].values()))
-            self.assertEqual("2026-08-26", record["first_seen"])
-            self.assertIn("| 2026-08-26 |", page.read_text(encoding="utf-8"))
+            # first_seen 粘住：首次写入时 = 扫描日-1（2026-08-26 → 2026-08-25），后续扫描不回跳。
+            self.assertEqual("2026-08-25", record["first_seen"])
+            self.assertIn("| 2026-08-25 |", page.read_text(encoding="utf-8"))
 
     def test_daily_summary_accepts_list_source_summary(self):
         markdown = build_daily_summary_markdown(
@@ -499,6 +501,214 @@ class MarkdownTableTests(unittest.TestCase):
         lines = markdown_table(["A", "B"], [["x|y", "line\nbreak"]])
         self.assertEqual(3, len(lines))
         self.assertTrue(all(line.count("|") == 3 for line in lines))
+
+    # === 2026-09-03：收藏理由字段 + 手动收藏 ===
+
+    def test_article_markdown_includes_favorite_reason_field(self):
+        markdown, _, _ = build_article_markdown(
+            {"title": "Test", "收藏理由": "因为正在做 Agent 项目"},
+            "Feed",
+            "",
+        )
+        self.assertIn('收藏理由: "因为正在做 Agent 项目"', markdown)
+
+    def test_article_markdown_favorite_reason_defaults_empty(self):
+        markdown, _, _ = build_article_markdown({"title": "Test"}, "Feed", "")
+        self.assertIn('收藏理由: ""', markdown)
+
+    def test_write_saved_collection_reads_reason_from_article_note(self):
+        filename = "未知-Foo.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            date_dir = root / "2026-08-26"
+            source_dir = date_dir / "信息源" / "GitHub Trending"
+            source_dir.mkdir(parents=True)
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, saved="[x]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            (source_dir / filename).write_text(
+                '---\n原文标题: "Foo"\n来源: "GitHub Trending"\n收藏理由: "SDD 实战案例"\n---\n',
+                encoding="utf-8",
+            )
+            page, count = write_saved_collection(root, report_date="2026-08-27")
+            self.assertEqual(1, count)
+            text = page.read_text(encoding="utf-8")
+            self.assertIn("| 收藏时间 | 来源 | 文章 | 收藏理由 |", text)
+            self.assertIn("SDD 实战案例", text)
+            record = next(iter(json.loads(
+                (root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8")
+            )["records"].values()))
+            self.assertEqual("SDD 实战案例", record.get("reason"))
+
+    def test_write_saved_collection_reason_falls_back_dash(self):
+        filename = "未知-Foo.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            date_dir = root / "2026-08-26"
+            date_dir.mkdir(parents=True)
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, saved="[x]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            page, count = write_saved_collection(root, report_date="2026-08-27")
+            text = page.read_text(encoding="utf-8")
+            self.assertIn("—", text)
+
+    def test_write_saved_collection_preserves_manual_records(self):
+        filename = "未知-Foo.md"
+        manual = {
+            "manual/2026-08-26/abc12345": {
+                "id": "manual/2026-08-26/abc12345",
+                "title": "外部文章",
+                "source": "juejin.cn",
+                "url": "https://juejin.cn/post/1",
+                "first_seen": "2026-08-26",
+                "reason": "手动收藏",
+                "kind": "manual",
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            date_dir = root / "2026-08-26"
+            date_dir.mkdir(parents=True)
+            (date_dir / "今日总结.md").write_text(
+                self._saved_table(filename, saved="[ ]", title="Foo 文章"),
+                encoding="utf-8",
+            )
+            # 第一次：只有 manual 记录
+            page, count = write_saved_collection(root, report_date="2026-08-26", manual_records=manual)
+            self.assertEqual(1, count)
+            self.assertIn("https://juejin.cn/post/1", page.read_text(encoding="utf-8"))
+            # 第二次重建（如每日扫描）：manual 记录必须保留，即使表格没有勾选。
+            page, count = write_saved_collection(root, report_date="2026-08-27")
+            self.assertEqual(1, count)
+            text = page.read_text(encoding="utf-8")
+            self.assertIn("外部文章", text)
+            self.assertIn("https://juejin.cn/post/1", text)
+            records = json.loads(
+                (root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8")
+            )["records"]
+            self.assertIn("manual/2026-08-26/abc12345", records)
+
+    def test_manual_record_renders_external_link_not_vault_path(self):
+        manual = {
+            "manual/2026-08-26/abc12345": {
+                "id": "manual/2026-08-26/abc12345",
+                "title": "外部文章",
+                "source": "juejin.cn",
+                "url": "https://juejin.cn/post/1",
+                "first_seen": "2026-08-26",
+                "reason": "",
+                "kind": "manual",
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "自动获取信息"
+            page, count = write_saved_collection(root, report_date="2026-08-26", manual_records=manual)
+            text = page.read_text(encoding="utf-8")
+            self.assertIn("[外部文章](https://juejin.cn/post/1)", text)
+            # 外链不应被编码成 vault 相对路径
+            self.assertNotIn("../2026-08-26", text)
+
+    def test_manual_source_from_url(self):
+        from scripts.push_to_obsidian import _manual_source_from_url
+        self.assertEqual("juejin.cn", _manual_source_from_url("https://www.juejin.cn/post/123"))
+        self.assertEqual("bilibili.com", _manual_source_from_url("https://www.bilibili.com/video/BV1xx"))
+        self.assertEqual("手动收藏", _manual_source_from_url("not-a-url"))
+
+    def test_fetch_page_title_and_desc(self):
+        from scripts.push_to_obsidian import _fetch_page_title_and_desc
+        html_text = (
+            "<html><head><title> 测试标题  </title>"
+            '<meta name="description" content="这是描述">'
+            "</head><body></body></html>"
+        )
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            class FakeResp:
+                def read(self, *args):
+                    return html_text.encode("utf-8")
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    return False
+            mock_urlopen.return_value = FakeResp()
+            title, desc = _fetch_page_title_and_desc("https://example.com")
+        self.assertEqual("测试标题", title)
+        self.assertEqual("这是描述", desc)
+
+    def test_fetch_page_title_and_desc_network_failure(self):
+        from scripts.push_to_obsidian import _fetch_page_title_and_desc
+        with patch("urllib.request.urlopen", side_effect=OSError("网络失败")):
+            title, desc = _fetch_page_title_and_desc("https://example.com")
+        self.assertEqual(("", ""), (title, desc))
+
+    def test_add_manual_urls_saved_direct_collect(self):
+        from scripts.push_to_obsidian import add_manual_urls
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            (vault / "自动获取信息").mkdir(parents=True)
+            with patch("scripts.push_to_obsidian._fetch_page_title_and_desc",
+                       return_value=("测试外部文章", "简介内容")), \
+                 patch("scripts.push_to_obsidian.summarize_daily",
+                       side_effect=AssertionError("saved 模式不应调用 summarize_daily（零 LLM）")):
+                add_manual_urls(
+                    ["https://juejin.cn/post/1"],
+                    str(vault),
+                    note="因为正在做 Agent",
+                    saved=True,
+                )
+            root = vault / "自动获取信息"
+            date_dir = root / "2026-09-03"
+            # 笔记生成 + 收藏理由写入 frontmatter
+            note_files = list((date_dir / "信息源" / "juejin.cn").glob("*.md"))
+            self.assertEqual(1, len(note_files))
+            note_text = note_files[0].read_text(encoding="utf-8")
+            self.assertIn('收藏理由: "因为正在做 Agent"', note_text)
+            # 今日总结重建包含该文章
+            summary = (date_dir / "今日总结.md").read_text(encoding="utf-8")
+            self.assertIn("测试外部文章", summary)
+            # 收藏集合有 manual 记录
+            records = json.loads(
+                (root / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8")
+            )["records"]
+            manual = [r for r in records.values() if r.get("kind") == "manual"]
+            self.assertEqual(1, len(manual))
+            self.assertEqual("因为正在做 Agent", manual[0].get("reason"))
+            self.assertEqual("juejin.cn", manual[0].get("source"))
+            self.assertEqual("2026-09-03", manual[0].get("first_seen"))
+
+    def test_add_manual_urls_ai_kept_and_rejected(self):
+        from scripts.push_to_obsidian import add_manual_urls
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            (vault / "自动获取信息").mkdir(parents=True)
+            with patch("scripts.push_to_obsidian._fetch_page_title_and_desc",
+                       return_value=("值得看的文章", "简介")), \
+                 patch("scripts.push_to_obsidian.select_for_ai_fetch",
+                       return_value=[{"ai_selected": True, "selection_reason": "与主题相关"}]), \
+                 patch("scripts.push_to_obsidian.summarize_daily", return_value={}):
+                add_manual_urls(["https://example.com/a"], str(vault), saved=False)
+            date_dir = vault / "自动获取信息" / "2026-09-03"
+            note_files = list((date_dir / "信息源" / "example.com").glob("*.md"))
+            self.assertEqual(1, len(note_files))
+            # 情况 1 不直接进收藏集合（等用户勾选）
+            records = json.loads(
+                (vault / "自动获取信息" / "收藏集合" / "_收藏索引.json").read_text(encoding="utf-8")
+            )["records"]
+            self.assertEqual({}, records)
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            (vault / "自动获取信息").mkdir(parents=True)
+            with patch("scripts.push_to_obsidian._fetch_page_title_and_desc",
+                       return_value=("不值得看的文章", "简介")), \
+                 patch("scripts.push_to_obsidian.select_for_ai_fetch",
+                       return_value=[{"ai_selected": False, "selection_reason": "与主题无关"}]), \
+                 patch("scripts.push_to_obsidian.summarize_daily", return_value={}):
+                add_manual_urls(["https://example.com/b"], str(vault), saved=False)
+            date_dir = vault / "自动获取信息" / "2026-09-03"
+            note_files = list((date_dir / "信息源" / "example.com").glob("*.md"))
+            self.assertEqual(0, len(note_files))
 
 
 if __name__ == "__main__":

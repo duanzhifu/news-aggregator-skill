@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
@@ -1154,21 +1155,28 @@ def build_saved_collection_markdown(records, report_date):
         '',
         '# 收藏集合',
         '',
-        '> 来自各日「今日总结」表里勾了「是否收藏」的文章。取消勾选后下次导出会从这里拿掉。',
+        '> 来自各日「今日总结」表里勾了「是否收藏」的文章（收藏时间 = 首次观察到勾选的扫描日 - 1），',
+        '> 以及手动收藏的链接（来源标站点域名）。取消勾选后下次导出会从这里拿掉。',
         '',
     ]
     rows = []
     for record in ordered:
         title = clean_markdown_cell(record.get('title') or '（无标题）')
-        href = encode_markdown_path(f"../{record.get('article_path', '')}")
+        if record.get('kind') == 'manual' and record.get('url'):
+            # 手动收藏：直接外链到原始 URL（vault 内没有对应文章笔记）。
+            href = record['url']
+        else:
+            href = encode_markdown_path(f"../{record.get('article_path', '')}")
+        reason = clean_markdown_cell(record.get('reason') or '—')
         rows.append([
             record.get('first_seen') or report_date,
             clean_markdown_cell(record.get('source') or '-'),
             f'[{title}]({href})',
+            reason,
         ])
-    lines.extend(markdown_table(['收藏时间', '来源', '文章'], rows) if rows else [
-        '| 收藏时间 | 来源 | 文章 |',
-        '| --- | --- | --- |',
+    lines.extend(markdown_table(['收藏时间', '来源', '文章', '收藏理由'], rows) if rows else [
+        '| 收藏时间 | 来源 | 文章 | 收藏理由 |',
+        '| --- | --- | --- | --- |',
     ])
     lines.append('')
     return '\n'.join(lines)
@@ -1194,6 +1202,16 @@ def collect_saved_rows_from_vault(root):
             if not row['saved']:
                 continue
             record_id = _saved_article_id(date_dir.name, row['key'])
+            # 收藏理由：去对应文章笔记 frontmatter 读「收藏理由」字段（用户手动填写）。
+            reason = ''
+            try:
+                note_rel = normalize_article_path(row['key']).lstrip('./')
+                note_file = date_dir / note_rel
+                if note_file.exists():
+                    fm = parse_frontmatter(note_file.read_text(encoding='utf-8'))
+                    reason = str(fm.get('收藏理由') or '').strip()
+            except Exception:
+                reason = ''
             collected[record_id] = {
                 'id': record_id,
                 'title': row['title'],
@@ -1201,12 +1219,26 @@ def collect_saved_rows_from_vault(root):
                 'fetch_date': date_dir.name,
                 'article_path': record_id,
                 'article_key': row['key'],
+                'reason': reason,
             }
     return collected
 
 
-def write_saved_collection(root, report_date=None):
-    """Rebuild 收藏集合 from all daily-summary 是否收藏 checkboxes."""
+def _day_before(date_str):
+    """扫描日 - 1 天：勾选动作不可观测，first_seen 用「首次观察到 [x] 的扫描日 - 1」近似真实勾选日。"""
+    try:
+        return (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+    except (TypeError, ValueError):
+        return date_str
+
+
+def write_saved_collection(root, report_date=None, manual_records=None):
+    """Rebuild 收藏集合 from all daily-summary 是否收藏 checkboxes.
+
+    - 表格勾选：first_seen = 首次观察到 [x] 的扫描日 - 1（近似真实勾选日，2026-09-03 拍板）。
+    - reason：来自文章笔记 frontmatter 收藏理由（用户填写）或手动收藏时传入的说明。
+    - manual_records：手动收藏记录（kind=manual），不来自任何今日总结表格，重建时保留。
+    """
     report_date = report_date or TODAY
     root = Path(root)
     collection_dir = root / '收藏集合'
@@ -1217,8 +1249,15 @@ def write_saved_collection(root, report_date=None):
     records = {}
     for record_id, record in current.items():
         old = previous.get(record_id) or {}
-        record['first_seen'] = old.get('first_seen') or report_date
+        record['first_seen'] = old.get('first_seen') or _day_before(report_date)
+        record['reason'] = record.get('reason') or old.get('reason') or ''
         records[record_id] = record
+    # 手动收藏记录：保留历史 + 合并本次新增（优先级：本次 > 历史）
+    for record_id, record in (manual_records or {}).items():
+        records[record_id] = record
+    for record_id, record in (previous or {}).items():
+        if record.get('kind') == 'manual' and record_id not in records:
+            records[record_id] = record
     payload = {
         'version': 1,
         'updated_at': datetime.now().isoformat(timespec='seconds'),
@@ -1305,6 +1344,7 @@ def build_article_markdown(item, source_cn, source_summary):
     if item.get('engagement_score') is not None:
         yaml_lines.append(f'互动辅助分: {item["engagement_score"]}')
     yaml_lines.append(f'标签: {json.dumps(tags_list, ensure_ascii=False)}')
+    yaml_lines.append(f'收藏理由: "{yaml_escape(str(item.get("收藏理由") or ""))}"')
     if metrics:
         yaml_lines.append('指标:')
         for label, val in metrics.items():
@@ -2110,6 +2150,198 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
     print(f"输出根目录：{root}")
 
 
+def _fetch_page_title_and_desc(url, timeout=8):
+    """轻量抓取网页标题 + meta description（不抓正文、不转录）。失败返回 ('', '')。"""
+    if not url or not url.startswith(('http://', 'https://')):
+        return '', ''
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(512 * 1024)
+        text = raw.decode('utf-8', errors='replace')
+    except Exception:
+        return '', ''
+    title = ''
+    m = re.search(r'<title[^>]*>(.*?)</title>', text, re.IGNORECASE | re.DOTALL)
+    if m:
+        title = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', m.group(1))).strip()[:200]
+    desc = ''
+    for pat in (r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+                r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']'):
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            desc = re.sub(r'\s+', ' ', m.group(1)).strip()[:500]
+            break
+    return title, desc
+
+
+def _manual_source_from_url(url):
+    """手动收藏来源：站点域名（如 juejin.cn），取不到回退「手动收藏」。"""
+    try:
+        host = (urlsplit(url).hostname or '').lower()
+        if host:
+            return host.removeprefix('www.')
+    except Exception:
+        pass
+    return '手动收藏'
+
+
+def add_manual_urls(urls, vault_path, note='', saved=False):
+    """手动收藏：URL → 抓取 → AI 分析（情况1）或直接收藏（情况2）→ 进当天今日总结。
+
+    - 情况 1（默认，未 --saved）：没仔细看 → AI 判断值不值得看；值得看才生成笔记进总结，不值得则跳过。
+    - 情况 2（--saved）：仔细看过 → 直接生成笔记 + 直接写收藏集合（kind=manual）。
+    - 视频 URL 只抓标题+简介（不转录，转录留到真要看时跑 video_to_article.py）。
+    """
+    root = Path(vault_path) / '自动获取信息'
+    date_dir = root / TODAY
+    sources_root = date_dir / '信息源'
+    date_dir.mkdir(parents=True, exist_ok=True)
+    sources_root.mkdir(parents=True, exist_ok=True)
+    cfg = load_user_config()
+    reject = cfg.get('reject') or []
+    topics = cfg.get('topics') or None
+    existing_articles = load_existing_articles(root)
+
+    print(f"\n{'='*60}")
+    print(f"手动收藏：{len(urls)} 个 URL（{'已看过直接收藏' if saved else 'AI 判断是否值得看'}）")
+    print(f"{'='*60}")
+
+    new_items = []
+    manual_records = {}
+    skipped = 0
+    failed = []
+    for url in urls:
+        url = str(url or '').strip()
+        if not url:
+            continue
+        print(f"\n  URL: {url}")
+        # 去重：URL 已存在 vault 则跳过
+        if article_already_exists({'url': url, 'title': ''}, existing_articles):
+            print("  [跳过] 该 URL 已在库中")
+            skipped += 1
+            continue
+        title, desc = _fetch_page_title_and_desc(url)
+        src_cn = _manual_source_from_url(url)
+        item = {
+            'url': url,
+            'title': title or url,
+            'title_zh': title or url,
+            'source': src_cn,
+            'source_key': re.sub(r'[^a-z0-9]', '_', src_cn.lower()),
+            'published_at': TODAY,
+            'time_kind': 'unknown',
+            'summary_zh': desc,
+            'favorite_reason': note,
+            '收藏理由': note,
+        }
+        if not title:
+            print("  [警告] 标题抓取失败，用 URL 代替")
+        if saved:
+            # 情况 2：仔细看过，直接收藏。跳过 AI 判断。
+            item['recommendation_level'] = 'strongly_recommended'
+            item['recommendation_reason'] = '用户手动收藏（已看过）'
+            item['quality_score'] = 80
+            item['evaluation_status'] = 'manual'
+            new_items.append(item)
+            record_id = f"manual/{TODAY}/{hashlib.sha1(url.encode('utf-8')).hexdigest()[:8]}"
+            manual_records[record_id] = {
+                'id': record_id,
+                'title': title or url,
+                'source': src_cn,
+                'url': url,
+                'first_seen': TODAY,
+                'reason': note,
+                'kind': 'manual',
+            }
+            print(f"  [直接收藏] 来源={src_cn}，说明={'有' if note else '无'}")
+            continue
+        # 情况 1：AI 判断值不值得看（只基于标题+简介，不抓正文不转录）。
+        try:
+            selection = select_for_ai_fetch([item], topics=topics, recency_days=7, reject=reject)
+            picked = selection[0] if selection else {}
+            if picked.get('ai_selected') is not True:
+                reason = picked.get('selection_reason', '')
+                print(f"  [AI 判断不值得看] {reason[:120]}")
+                skipped += 1
+                continue
+            item['ai_selected'] = True
+            item['selection_reason'] = picked.get('selection_reason', '')
+        except Exception as error:
+            print(f"  [AI 判断失败，跳过] {error}", file=sys.stderr)
+            failed.append({'url': url, 'error': str(error)[:200]})
+            continue
+        # 值得看 → 生成笔记进当天总结（无正文，只标题+简介+推荐理由）。
+        item['recommendation_level'] = 'optional'
+        item['recommendation_reason'] = f"手动收藏，AI 判断值得看。{item.get('selection_reason', '')}"
+        item['quality_score'] = 70
+        item['evaluation_status'] = 'manual'
+        new_items.append(item)
+        print(f"  [AI 判断值得看] 进当天总结")
+
+    # 写文章笔记
+    written = 0
+    for item in new_items:
+        try:
+            src_cn = item.get('source') or '手动收藏'
+            source_dir = sources_root / src_cn
+            source_dir.mkdir(parents=True, exist_ok=True)
+            pub_date, _ = parse_publish_datetime(item)
+            filename = build_article_filename(item, pub_date)
+            filepath = source_dir / filename
+            if filepath.exists():
+                base = filepath.stem
+                suffix = 2
+                while (source_dir / f"{base}-{suffix}.md").exists():
+                    suffix += 1
+                filepath = source_dir / f"{base}-{suffix}.md"
+            md, _, _ = build_article_markdown(item, src_cn, '')
+            filepath.write_text(md, encoding='utf-8')
+            written += 1
+            print(f"  [入库] {filepath.relative_to(root)}")
+        except Exception as error:
+            print(f"  [写入失败] {item.get('url')}: {error}", file=sys.stderr)
+            failed.append({'url': item.get('url', ''), 'error': str(error)[:200]})
+
+    # 重建当天今日总结（保留已读/已收藏勾选），并刷新收藏集合。
+    # saved 模式跳过 summarize_daily（LLM 源总结）：手动收藏已看过直接收，不为之打 LLM、不为之失败告警。
+    daily_items = load_articles_for_date(date_dir)
+    daily_by_source_cn, daily_source_cn_to_orig = group_items_by_source(daily_items)
+    if saved:
+        daily_source_summaries_cn = {}
+    else:
+        daily_source_summaries_orig = summarize_daily(daily_items)
+        daily_source_summaries_cn = {
+            src_cn: daily_source_summaries_orig.get(src_orig, '')
+            for src_cn, src_orig in daily_source_cn_to_orig.items()
+        }
+    daily_path = date_dir / "今日总结.md"
+    read_states = {}
+    saved_states = {}
+    if daily_path.exists():
+        try:
+            existing_summary = daily_path.read_text(encoding='utf-8')
+            read_states = parse_daily_read_states(existing_summary)
+            saved_states = parse_daily_saved_states(existing_summary)
+        except OSError as error:
+            print(f"读取已有今日总结勾选失败，将全部视为未读：{error}", file=sys.stderr)
+    daily_md = build_daily_summary_markdown(
+        daily_source_summaries_cn,
+        daily_by_source_cn,
+        read_states=read_states,
+        saved_states=saved_states,
+    )
+    daily_path.write_text(daily_md, encoding='utf-8')
+    print(f"\n已重建今日总结：{daily_path}")
+    saved_page, saved_count = write_saved_collection(root, manual_records=manual_records)
+    print(f"Obsidian 收藏集合：{saved_page}（{saved_count} 篇）")
+    print(f"\n完成：入库 {written} 篇，跳过 {skipped} 个，失败 {len(failed)} 个")
+    for f in failed:
+        print(f"  失败: {f['url']}: {f['error']}", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description='推送新闻到 Obsidian')
     parser.add_argument('--source', default=','.join(DEFAULT_SOURCE_KEYS),
@@ -2124,6 +2356,12 @@ def main():
     parser.add_argument('--topics', help='自定义推荐主题，逗号分隔')
     parser.add_argument('--dynamic-limit', type=int, default=None, help='动态搜索每主题条数（默认读 user_interests.json limit_per_topic）')
     parser.add_argument('--recency-days', type=int, default=7, help='近多少天内容获得时效优先级')
+    parser.add_argument('--add-url', action='append', default=None,
+                        help='手动收藏：追加一个 URL（可重复传多个）。默认走 AI 判断是否值得看；'
+                             '结合 --saved 表示已仔细看过直接收藏')
+    parser.add_argument('--note', default='', help='手动收藏说明（非必写），写入笔记收藏理由字段并显示在收藏集合')
+    parser.add_argument('--saved', action='store_true',
+                        help='手动收藏已仔细看过：跳过 AI 判断，直接生成笔记并进收藏集合')
     args = parser.parse_args()
 
     vault_path = args.vault or os.environ.get('OBSIDIAN_VAULT_PATH')
@@ -2131,6 +2369,10 @@ def main():
         print("错误：请通过 --vault 参数或 OBSIDIAN_VAULT_PATH 环境变量指定 Obsidian Vault 根目录。",
               file=sys.stderr)
         sys.exit(1)
+
+    if args.add_url:
+        add_manual_urls(args.add_url, vault_path, note=args.note, saved=args.saved)
+        return
 
     sources = [s.strip() for s in args.source.split(',') if s.strip()]
     topics = [topic.strip() for topic in args.topics.split(',') if topic.strip()] if args.topics else None
