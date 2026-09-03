@@ -33,7 +33,10 @@ def _configured_profile():
 
 def fetch_search_results_bing(keyword: str, limit: int = 5) -> list:
     encoded_kw = urllib.parse.quote(keyword)
-    search_url = f"https://www.bing.com/search?q={encoded_kw}"
+    # 中文大陆版 Bing：用户要的是中文生态结果源（trellis 等多义词两侧索引完全不同）。
+    # 英文国际版 www.bing.com 落在英文索引，抓不到 trytrellis.app/mindfold-ai/知乎/掘金 等中文技术源。
+    # setmkt=zh-CN & setlang=zh-hans 锁死市场/语言，属市场级修复，对任意中文关键词生效。
+    search_url = f"https://cn.bing.com/search?q={encoded_kw}&setmkt=zh-CN&setlang=zh-hans"
     results = []
 
     print(f"[BingSearch] 正在检索关键词: '{keyword}' -> URL: {search_url}")
