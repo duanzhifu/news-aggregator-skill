@@ -25,7 +25,7 @@ python3 scripts/fetch_news.py --source hackernews,github,wallstreetcn --no-save
 # All sources (broad scan)
 python3 scripts/fetch_news.py --source all --limit 15 --deep --no-save
 
-# With keyword filter (auto-expand: "AI" → "AI,LLM,GPT,Claude,Agent,RAG")
+# With keyword filter (literal comma-separated: "AI,LLM,GPT")
 python3 scripts/fetch_news.py --source hackernews --keyword "AI,LLM,GPT" --deep --no-save
 ```
 
@@ -177,7 +177,7 @@ The output is `<Vault>/自动获取信息/YYYY-MM-DD/`: article notes are stored
 1. **Language**: ALL output in **Simplified Chinese (简体中文)**. Keep well-known English proper nouns (ChatGPT, Python, etc.).
 2. **Time**: **MANDATORY** field. Never skip. If missing in JSON, mark as "Unknown Time". Preserve "Real-time" / "Today" / "Hot" as-is.
 3. **Anti-Hallucination**: Only use data from the JSON. Never invent news items. Use simple SVO sentences. Do not fabricate causal relationships.
-4. **Smart Keyword Expansion**: When user says "AI" → auto-expand to `"AI,LLM,GPT,Claude,Agent,RAG,DeepSeek"`. Similar expansions for other domains.
+4. **Keyword Filter**: `--keyword` takes literal comma-separated terms (e.g. `"AI,LLM,GPT"`), matched as word-boundary regex. No automatic expansion.
 5. **Time Window**: 默认只保留发布时间在最近 72 小时内的条目；发布时间缺失或无法解析的条目不进入默认结果。掘金热榜会优先从文章页面的 `time[datetime]` 读取发布时间；GitHub Trending 当前热榜项目是例外，即使最近 push 超过 72 小时也保留，但必须有 GitHub API 提供的 `pushed_at`。可用 `--hours N` 调整普通来源窗口。
 6. **Smart Fill**: If results < 5 items in a time window, supplement only with other items from the same time window and mark them with ⚠️. 不再使用更早内容补齐；International News sources remain a hard 24h window.
 6. **Save**: Always save report to `reports/YYYY-MM-DD/` before displaying.
@@ -240,7 +240,7 @@ When the user says **"如意如意"** or asks for "menu/help":
 
 ### 去重规则
 
-已发布文章继续按 `(标题原文 + 来源)` 跨日期去重。AI 的确定性拒绝使用“来源 + 规范化 URL”作为首选 key，无可靠 URL 时回退到“来源 + 标准化标题”，并在下一次调用 AI 前跳过。正文乱码、页面超时、证据不足和 AI 调用失败属于临时结果，只展示在每日拒绝页，不进入永久去重索引。
+已发布文章按 `规范化 URL` 跨日期去重（URL identity wins）；仅当条目无可靠 URL 时，才回退到 `(标准化标题 + 来源)`。AI 的确定性拒绝、正文乱码、页面超时、证据不足和 AI 调用失败属于临时结果，只展示在每日拒绝页，不进入永久去重索引。
 
 ### 定时运行
 

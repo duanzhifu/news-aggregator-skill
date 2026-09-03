@@ -1,17 +1,17 @@
-"""视频源正文提取（4.8：字幕一级）。
+"""视频源正文提取（4.8：字幕一级 + Groq 语音兜底）。
 
 统一入口：fetch_video_transcript(url)
 
-优先级（第 1 级）：
-  1. bilibili：用浏览器 Profile 的登录 cookie（Playwright 复用 D:\\news-aggregator-browser-profile）
-     调 /x/web-interface/view 拿 cid → /x/player/wbi/v2 拿 AI 字幕列表 → 抓 ai-zh 字幕 → 拼全文。
-  2. youtube_tech：暂退化——RSS 描述 + 视频页 DOM 简介（见 fetch_news._fetch_url_evidence_with_method）。
+优先级（两级转录，均已落地）：
+  1. 平台字幕 API（第 1 级）：
+     - bilibili：用浏览器 Profile 的登录 cookie（Playwright 复用 D:\\news-aggregator-browser-profile）
+       调 /x/web-interface/view 拿 cid → /x/player/wbi/v2 拿 AI 字幕列表 → 抓 ai-zh 字幕 → 拼全文。
+     - youtube_tech：暂退化——RSS 描述 + 视频页 DOM 简介（见 fetch_news._fetch_url_evidence_with_method）。
+  2. Groq whisper 云端语音转录（第 2 级兜底，已落地）：
+     - 第 1 级拿不到/失败/空 → 走 groq_transcribe.transcribe_via_groq（yt-dlp 下音频 → Groq /audio/transcriptions），
+       成功返回 "groq_transcript"。见 fetch_news 视频分支与 references/groq-whisper-tier2-2026-08-30.md。
 
-为什么只做"字幕"一级、不做语音转录：
-  - bilibili / youtube 技术类视频 80%+ 有官方/AI 字幕，走 API 拿现成字幕比语音识别又快又准。
-  - 语音转录（whisper / yt-dlp 音频）是第 2 级兜底，成本高、需额外 key/模型，本次不落地。
-
-失败兜底：任何一步失败（无 cookie / 无字幕 / 网络 / 解析）→ 返回空字符串，
+失败兜底：两级都失败（无 cookie / 无字幕 / 网络 / 解析 / Groq 异常）→ 返回空字符串，
 由下游 fetch_news 回退到"视频页 DOM 抓简介"，绝不中断整个拉取管线。
 """
 import json

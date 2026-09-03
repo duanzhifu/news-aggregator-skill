@@ -16,7 +16,7 @@
 - **🌍 全网多源聚合**：一站式覆盖跨越硅谷科技、中国创投、开源社区、金融市场、国际新闻以及顶级 AI 播客/硬核推文的 **44+ 个高价值信源**。
 - **🔧 OPML 自定义订阅**：内置 44+ 源覆盖不全时，在 `user_sources.opml` 里新增一条带 `xmlUrl` 的 RSS/Atom 订阅项即可接入，兼容 Feedly / Inoreader 等 RSS 阅读器导出格式。未内置的媒体、机构博客和个人订阅源（如 NYT 中文）都可走这条路，详见 `user_sources.opml.example`。
 - **🚀 完美支持 OpenClaw**：专为原生大模型 Agent 平台（如 OpenClaw、Code Agent）深度定制，即插即用，沉浸式体验信息流。
-- **🆓 开箱即用 (Zero-Config)**：纯净抓取，**无需配置任何第三方 API Key**，告别繁琐的环境变量和额度焦虑。
+- **🔑 轻量配置 (Config-Lite)**：只需在 `.env` 填一个 LLM API Key（支持商汤/中转双 provider 注释切换）与可选 Groq Key（视频转写），即插即用。
 - **🧠 AI 全文审阅**：AI 先依据来源列表、原始时间和摘要决定值得打开的文章，再抓取完整 DOM 正文并逐段审阅，覆盖全文后完成翻译、总结与质量确认。
 - **📰 场景化早报 (Daily Briefings)**：内置多套场景预设（综合早报、财经早报、科技早报、吃瓜早报、AI深度日报），一键生成杂志级排版的 Markdown 中文报告。
 - **🪄 魔法交互菜单**：支持通过专属口令唤醒全局交互式菜单，告别繁琐长难句，只需输入序号即可指哪打哪。
@@ -112,7 +112,7 @@ playwright install chromium
 
 > **"news-aggregator-skill 如意如意"**
 
-系统将立即为您展示多达 53 个功能选项的精美列表，直接回复数字序号即可生成完美排版的今日大盘！
+系统将立即为您展示多达 52 个功能选项的精美列表，直接回复数字序号即可生成完美排版的今日大盘！
 
 ### 2. 🗣️ 自然语言触发
 
@@ -130,8 +130,7 @@ playwright install chromium
 
 ### 社交平台技术内容
 
-支持 `douyin`、`bilibili`。关键词默认读取
-`config/social_sources.json`，也可以通过 `--keyword` 临时指定：
+支持 `douyin`、`bilibili`。bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `run_daily.ps1` 注入），仅在无 topics 时兜底读取 `config/social_sources.json`；也可通过 `--keyword` 临时指定：
 
 ```bash
 python scripts/fetch_news.py --source douyin,bilibili --keyword "前端,AI,软件工程" --limit 5

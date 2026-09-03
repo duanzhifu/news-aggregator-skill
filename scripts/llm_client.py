@@ -1,4 +1,4 @@
-"""读取 Codex CLI 的认证信息，调用 OpenAI Responses API 进行翻译和总结。"""
+"""读取 skill 本地 .env 的 LLM_* 配置，调用 OpenAI 兼容协议（/responses 或 /chat/completions）进行翻译和总结。"""
 import json
 import os
 import urllib.request
@@ -22,7 +22,8 @@ def _load_env_file():
     """从 skill 根目录 .env 读取 LLM_* 变量注入 os.environ（不覆盖已有环境变量）。
 
     让 skill 的 LLM 端点/模型与 Codex CLI（~/.codex/config.toml）解耦：
-    只有本 skill 的 pipeline 读到 timicc 中转配置，Codex 改动默认模型不影响这里。
+    只有本 skill 的 pipeline 读到 .env 里当前激活的 provider 配置（商汤 sensenova 或 timicc 中转，单文件注释切换），
+    Codex 改动默认模型不影响这里。
     """
     global _ENV_FILE_TRIED
     if _ENV_FILE_TRIED:

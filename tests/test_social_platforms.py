@@ -13,7 +13,7 @@ from scripts import setup_social_login
 class SocialPlatformTests(unittest.TestCase):
     def test_login_platform_selection(self):
         self.assertEqual(
-            ["douyin", "bilibili"],
+            ["douyin", "bilibili", "bing"],
             setup_social_login.selected_platforms("all"),
         )
 

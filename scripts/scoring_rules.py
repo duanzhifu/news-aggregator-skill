@@ -11,8 +11,6 @@ SOURCE_KEY_ALIASES = {
     "掘金热榜": "juejin",
     "juejin": "juejin",
     "douyin": "douyin",
-    "weibo search": "weibo_search",
-    "weibo_search": "weibo_search",
     "wechat official account": "wechat",
     "wechat": "wechat",
 }
@@ -77,7 +75,7 @@ def engagement_metrics(item):
 
     source_key = normalize_source_key(item)
     heat = _parse_metric_value(item.get("heat"))
-    if heat is not None and source_key in {"devto", "github", "douyin", "weibo_search"}:
+    if heat is not None and source_key in {"devto", "github", "douyin"}:
         metrics.setdefault("热度", heat)
     hot_rank = _parse_metric_value(item.get("hot_rank"))
     if hot_rank is not None and source_key == "juejin":

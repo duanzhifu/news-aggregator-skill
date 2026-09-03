@@ -71,8 +71,6 @@ SOURCE_NAME_CN = {
     'react_blog': 'React 官方博客',
     'juejin': '掘金热榜',
     'sspai': '少数派',
-    'weibo': '微博热搜',
-    'weibo_search': '微博关键词',
     'douyin': '抖音',
     'bilibili': 'Bilibili',
     'youtube_tech': 'YouTube 科技频道',
@@ -167,8 +165,7 @@ CATEGORY_MAP = {
     'hackernews': 'programmer', 'lobsters': 'programmer', 'devto': 'programmer',
     'devto_react': 'programmer', 'v2ex': 'programmer',
     'github': 'github',
-    'douyin': 'social', 'bilibili': 'social', 'youtube_tech': 'social',
-    'weibo': 'social', 'weibo_search': 'social', 'wechat': 'social',
+    'douyin': 'social', 'bilibili': 'social', 'youtube_tech': 'social', 'wechat': 'social',
     'react_blog': 'frontend', 'juejin': 'frontend', 'sspai': 'frontend',
     '掘金热榜': 'frontend',  # 中文 key 直接匹配
     '少数派': 'frontend',
@@ -845,7 +842,6 @@ HEAT_METRIC_HINTS = {
     'devto': (r'([\d,.]+[km]?)\s*(?:reactions?)', '互动'),
     'v2ex': (r'([\d,.]+[km]?)\s*(?:replies?)', '回复'),
     'juejin': (r'([\d,.]+[km]?)', '热榜排名'),
-    'weibo': (r'([\d,.]+[km]?)', '热度'),
     'producthunt': (r'([\d,.]+[km]?)', '热度'),
 }
 

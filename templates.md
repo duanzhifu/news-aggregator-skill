@@ -15,8 +15,7 @@
 | 5 | 🤓 极客社区 (V2EX) | `--source v2ex` |
 | 6 | 🐧 腾讯科技 (Tencent News) | `--source tencent` |
 | 7 | 📈 华尔街见闻 (WallStreetCN) | `--source wallstreetcn` |
-| 8 | 🔴 微博热搜 (Weibo) | `--source weibo` |
-| 9 | 🤗 HF 每日论文 (Hugging Face) | `--source huggingface` |
+| 8 | 🤗 HF 每日论文 (Hugging Face) | `--source huggingface` |
 
 ---
 
@@ -24,15 +23,15 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 10 | 🧪 Latent Space AINews (swyx) | `--source latentspace_ainews` |
-| 11 | ChinAI (Jeffrey Ding) | `--source chinai` |
-| 12 | Memia (Ben Reid) | `--source memia` |
-| 13 | Ben's Bites | `--source bensbites` |
-| 14 | One Useful Thing (Ethan Mollick) | `--source oneusefulthing` |
-| 15 | Interconnects (Nathan Lambert) | `--source interconnects` |
-| 16 | AI to ROI | `--source aitoroi` |
-| 17 | KDnuggets | `--source kdnuggets` |
-| 18 | 🧠 全部 AI 内参聚合 | `--source ai_newsletters --limit 3` |
+| 9 | 🧪 Latent Space AINews (swyx) | `--source latentspace_ainews` |
+| 10 | ChinAI (Jeffrey Ding) | `--source chinai` |
+| 11 | Memia (Ben Reid) | `--source memia` |
+| 12 | Ben's Bites | `--source bensbites` |
+| 13 | One Useful Thing (Ethan Mollick) | `--source oneusefulthing` |
+| 14 | Interconnects (Nathan Lambert) | `--source interconnects` |
+| 15 | AI to ROI | `--source aitoroi` |
+| 16 | KDnuggets | `--source kdnuggets` |
+| 17 | 🧠 全部 AI 内参聚合 | `--source ai_newsletters --limit 3` |
 
 ---
 
@@ -40,17 +39,17 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 19 | Paul Graham | `--source paulgraham` |
-| 20 | Wait But Why | `--source waitbutwhy` |
-| 21 | James Clear | `--source jamesclear` |
-| 22 | Farnam Street | `--source farnamstreet` |
-| 23 | Scott Young | `--source scottyoung` |
-| 24 | Dan Koe | `--source dankoe` |
-| 25 | 📚 全部文章聚合 | `--source essays --limit 3` |
-| 26 | Lex Fridman Podcast | `--source lexfridman` |
-| 27 | Latent Space (swyx) | `--source latentspace` |
-| 28 | 80,000 Hours | `--source 80000hours` |
-| 29 | 🎧 全部播客聚合 | `--source podcasts --limit 3` |
+| 18 | Paul Graham | `--source paulgraham` |
+| 19 | Wait But Why | `--source waitbutwhy` |
+| 20 | James Clear | `--source jamesclear` |
+| 21 | Farnam Street | `--source farnamstreet` |
+| 22 | Scott Young | `--source scottyoung` |
+| 23 | Dan Koe | `--source dankoe` |
+| 24 | 📚 全部文章聚合 | `--source essays --limit 3` |
+| 25 | Lex Fridman Podcast | `--source lexfridman` |
+| 26 | Latent Space (swyx) | `--source latentspace` |
+| 27 | 80,000 Hours | `--source 80000hours` |
+| 28 | 🎧 全部播客聚合 | `--source podcasts --limit 3` |
 
 ---
 
@@ -58,12 +57,12 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 30 | 🌅 默认早报 | `push_to_obsidian.py --limit 15 --vault <Vault>` |
-| 31 | 💰 财经早报 | `push_to_obsidian.py --source wallstreetcn,36kr,tencent --limit 15 --vault <Vault>` |
-| 32 | 🤖 科技早报 | `push_to_obsidian.py --source hackernews,github,producthunt --limit 15 --vault <Vault>` |
-| 33 | 🍉 社区热点 | `push_to_obsidian.py --source weibo,v2ex,tencent --limit 15 --vault <Vault>` |
-| 34 | 🧠 AI 深度日报 | `push_to_obsidian.py --source aihot,openai,anthropic,arxiv --limit 15 --deep --vault <Vault>` |
-| 35 | 📚 深度阅读清单 | `fetch_news.py --source essays,podcasts --limit 15 --deep --no-save` |
+| 29 | 🌅 默认早报 | `push_to_obsidian.py --limit 15 --vault <Vault>` |
+| 30 | 💰 财经早报 | `push_to_obsidian.py --source wallstreetcn,36kr,tencent --limit 15 --vault <Vault>` |
+| 31 | 🤖 科技早报 | `push_to_obsidian.py --source hackernews,github,producthunt --limit 15 --vault <Vault>` |
+| 32 | 🍉 社区热点 | `push_to_obsidian.py --source v2ex,tencent --limit 15 --vault <Vault>` |
+| 33 | 🧠 AI 深度日报 | `push_to_obsidian.py --source aihot,openai,anthropic,arxiv --limit 15 --deep --vault <Vault>` |
+| 34 | 📚 深度阅读清单 | `fetch_news.py --source essays,podcasts --limit 15 --deep --no-save` |
 
 ---
 
@@ -71,11 +70,11 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 36 | 🦞 Lobsters 技术深度 | `--source lobsters` |
-| 37 | 👩‍💻 Dev.to 开发者热门 | `--source devto` |
-| 38 | 📜 arXiv AI 最新论文 (cs.AI/CL/LG) | `--source arxiv` |
-| 39 | 📕 少数派 (sspai) | `--source sspai` |
-| 40 | 💻 InfoQ 中文 (软件工程/AI) | `--source infoq_cn --deep` |
+| 35 | 🦞 Lobsters 技术深度 | `--source lobsters` |
+| 36 | 👩‍💻 Dev.to 开发者热门 | `--source devto` |
+| 37 | 📜 arXiv AI 最新论文 (cs.AI/CL/LG) | `--source arxiv` |
+| 38 | 📕 少数派 (sspai) | `--source sspai` |
+| 39 | 💻 InfoQ 中文 (软件工程/AI) | `--source infoq_cn --deep` |
 
 ---
 
@@ -85,10 +84,10 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 41 | 🔥 AIHOT 中文 AI 精选（跨源 + 中文编辑稿） | `--source aihot` |
-| 42 | 📨 TLDR AI（英文日刊，每天 5-10 主题摘要） | `--source tldr_ai` |
-| 43 | 📜 Import AI by Jack Clark（英文周刊深度评论） | `--source import_ai --deep` |
-| 44 | 🌐 AI 精选三件套（一次拉全） | `--source aihot,tldr_ai,import_ai` |
+| 40 | 🔥 AIHOT 中文 AI 精选（跨源 + 中文编辑稿） | `--source aihot` |
+| 41 | 📨 TLDR AI（英文日刊，每天 5-10 主题摘要） | `--source tldr_ai` |
+| 42 | 📜 Import AI by Jack Clark（英文周刊深度评论） | `--source import_ai --deep` |
+| 43 | 🌐 AI 精选三件套（一次拉全） | `--source aihot,tldr_ai,import_ai` |
 
 ---
 
@@ -96,9 +95,9 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 45 | 🔧 我的订阅源 (OPML) | `--source user` |
+| 44 | 🔧 我的订阅源 (OPML) | `--source user` |
 
-> 💡 **首次使用 OPML（45）**：先 `cp user_sources.opml.example user_sources.opml`，编辑里面的 `<outline xmlUrl="...">` 加自己的源；或从 Feedly/Inoreader 导出 OPML 覆盖即可。
+> 💡 **首次使用 OPML（44）**：先 `cp user_sources.opml.example user_sources.opml`，编辑里面的 `<outline xmlUrl="...">` 加自己的源；或从 Feedly/Inoreader 导出 OPML 覆盖即可。
 
 ---
 
@@ -106,14 +105,14 @@
 
 | # | 名称 | 命令 |
 |---|---|---|
-| 46 | 🌍 国际新闻聚合 (最近 24h) | `--source international --limit 20` |
-| 47 | 📰 BBC Top News (最近 24h) | `--source bbc_top` |
-| 48 | 🌐 BBC World (最近 24h) | `--source bbc_world` |
-| 49 | 🈶 BBC 中文 (最近 24h) | `--source bbc_chinese` |
-| 50 | 🗞️ The Guardian World (最近 24h) | `--source guardian_world` |
-| 51 | 🛰️ Al Jazeera (最近 24h) | `--source aljazeera` |
-| 52 | 🇫🇷 France 24 (最近 24h) | `--source france24` |
-| 53 | 🧭 Reuters fallback (Google News RSS, 最近 24h) | `--source reuters` |
+| 45 | 🌍 国际新闻聚合 (最近 24h) | `--source international --limit 20` |
+| 46 | 📰 BBC Top News (最近 24h) | `--source bbc_top` |
+| 47 | 🌐 BBC World (最近 24h) | `--source bbc_world` |
+| 48 | 🈶 BBC 中文 (最近 24h) | `--source bbc_chinese` |
+| 49 | 🗞️ The Guardian World (最近 24h) | `--source guardian_world` |
+| 50 | 🛰️ Al Jazeera (最近 24h) | `--source aljazeera` |
+| 51 | 🇫🇷 France 24 (最近 24h) | `--source france24` |
+| 52 | 🧭 Reuters fallback (Google News RSS, 最近 24h) | `--source reuters` |
 
 > 💡 **输出与时间窗口**：国际新闻源必须按统一报告模板输出；抓取只保留最近 24 小时内容，不用旧闻补位。`reuters` 使用 Google News RSS 的 `site:reuters.com` 检索结果。Reuters 官方公开 RSS 不稳定；如有 Reuters Connect 账号，可把 authenticated RSS 放进 OPML。
 
@@ -131,4 +130,4 @@ hackernews,github,wallstreetcn
 
 ---
 
-**✨ 请输入序号 (1-53) 或源名组合来执行**
+**✨ 请输入序号 (1-52) 或源名组合来执行**

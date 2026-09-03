@@ -29,7 +29,7 @@
 - Python 3.10+，建议 Python 3.12
 - Git
 - Obsidian（仅在使用导出功能时需要）
-- 可用的 OpenAI Responses API 凭据，或已执行 `codex login`（仅在使用 LLM 总结和 Obsidian 导出时需要）
+- LLM API Key 写入 skill 本地 `.env` 的 `LLM_API_KEY`，OpenAI 兼容端点即可（支持 `/chat/completions`；`/responses` 可选，`LLM_API_MODE=auto` 自动探测降级。仅在使用 LLM 总结和 Obsidian 导出时需要）
 
 ### 拉取项目
 
@@ -116,13 +116,13 @@ D:\\Obsidian\\自动信息获取
 
 ```powershell
 python scripts/push_to_obsidian.py `
-  --source juejin,devto,github,openai `
+  --source juejin,devto,github,openai,bilibili `
   --limit 15 `
   --evidence-mode snapshot `
   --vault "D:\\Obsidian\\自动信息获取"
 ```
 
-默认来源也是 `juejin,devto,github,openai`，因此可简化为：
+默认来源也是 `juejin,devto,github,openai,bilibili`，因此可简化为：
 
 ```powershell
 python scripts/push_to_obsidian.py --limit 15 --evidence-mode snapshot --vault "D:\\Obsidian\\自动信息获取"
@@ -165,7 +165,7 @@ AI 时间判断会保存标准时间、时间类型、置信度和原始证据�
 
 ### 配置关键词
 
-默认配置是 [`config/social_sources.json`](config/social_sources.json)。可直接编辑其中的 `keywords`：
+bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `run_daily.ps1` 注入），仅在无 topics 时兜底读取 [`config/social_sources.json`](config/social_sources.json)；`douyin` 仍默认读该文件。可直接编辑其中的 `keywords`：
 
 ```json
 {
@@ -209,7 +209,7 @@ $env:SOCIAL_API_URL_DOUYIN = "https://example.com/search?keyword={query}"
 $env:SOCIAL_API_TOKEN_DOUYIN = "<token>"
 ```
 
-支持的平台变量名为 `DOUYIN`、`BILIBILI`、`WEIBO`、`WECHAT`。接口返回应为对象列表，或外层包含 `data`、`items`、`list`、`results` 的对象列表；每条至少提供 `title` 和 `url`，可选 `summary`、`author`、`time`、`heat`、`id`。
+支持的平台变量名为 `DOUYIN`、`BILIBILI`。接口返回应为对象列表，或外层包含 `data`、`items`、`list`、`results` 的对象列表；每条至少提供 `title` 和 `url`，可选 `summary`、`author`、`time`、`heat`、`id`。
 
 未配置接口或接口调用失败时，程序会降级至 Playwright 浏览器抓取。首次使用登录态时，运行交互式初始化命令；浏览器打开后自行完成抖音和 B 站登录，最后回到终端按 Enter 保存会话：
 
@@ -242,7 +242,7 @@ python scripts/push_to_obsidian.py `
 
 | 脚本 | 用途 |
 | --- | --- |
-| `scripts/run_daily.ps1` | 常规日报，来源为 `juejin,devto,github,openai,bilibili`，每源 15 条；抖音需显式指定 |
+| `scripts/run_daily.ps1` | 常规日报，来源由 `user_interests.json` 的 `daily_sources` 控制（当前配置：`juejin,devto,github,openai,bilibili`），每源 15 条；抖音需显式指定 |
 
 需要按本机实际位置调整：`$skillRoot`、`$pythonPath`、`$vaultPath`。日志写入 `logs/daily_task.log`。
 

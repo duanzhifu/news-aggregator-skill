@@ -123,7 +123,7 @@ description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 
 - `tech`: `github`, `hackernews`, `user` 等技术源
 - `ai`: `huggingface`, `arxiv`, `import_ai`, `tldr_ai`, `aihot` 等 AI 专区
 - `finance`: `36kr`, `wallstreetcn` 等财经创投源
-- `social`: `weibo`, `tencent` 等热搜社会源
+- `social`: `douyin`, `bilibili`, `tencent` 等热搜社会源
 - `international`: `bbc_top`, `bbc_world`, `guardian_world` 等国际新闻源
 
 ---

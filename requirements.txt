@@ -1,3 +1,5 @@
 requests
 beautifulsoup4
 playwright
+yt-dlp
+trafilatura
