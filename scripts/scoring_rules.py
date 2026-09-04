@@ -11,8 +11,6 @@ SOURCE_KEY_ALIASES = {
     "掘金热榜": "juejin",
     "juejin": "juejin",
     "douyin": "douyin",
-    "wechat official account": "wechat",
-    "wechat": "wechat",
 }
 
 ENGAGEMENT_ALIASES = {

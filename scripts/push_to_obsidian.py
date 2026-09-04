@@ -75,7 +75,6 @@ SOURCE_NAME_CN = {
     'douyin': '抖音',
     'bilibili': 'Bilibili',
     'youtube_tech': 'YouTube 科技频道',
-    'wechat': '微信公众号',
     '36kr': '36 氪',
     'tencent': '腾讯新闻',
     'wallstreetcn': '华尔街见闻',
@@ -93,17 +92,6 @@ def load_user_config():
         return {k: v for k, v in data.items() if not k.startswith('_')}
     except Exception:
         return {}
-
-
-def _extract_topic_keywords(topics):
-    """从 topics 提取特征词：英文技术词 + 核心中文词，用于 L1 宽松主题匹配（避免误杀）。"""
-    kws = set()
-    for t in topics or []:
-        t = str(t)
-        kws.update(m.lower() for m in re.findall(r'[A-Za-z][A-Za-z0-9-]*', t))
-    kws.update({'大模型', '模型', '智能体', '推理'})
-    kws.discard('')
-    return kws
 
 
 def _match_block_pattern(url, patterns):
@@ -166,7 +154,7 @@ CATEGORY_MAP = {
     'hackernews': 'programmer', 'lobsters': 'programmer', 'devto': 'programmer',
     'devto_react': 'programmer', 'v2ex': 'programmer',
     'github': 'github',
-    'douyin': 'social', 'bilibili': 'social', 'youtube_tech': 'social', 'wechat': 'social',
+    'douyin': 'social', 'bilibili': 'social', 'youtube_tech': 'social',
     'react_blog': 'frontend', 'juejin': 'frontend', 'sspai': 'frontend',
     '掘金热榜': 'frontend',  # 中文 key 直接匹配
     '少数派': 'frontend',

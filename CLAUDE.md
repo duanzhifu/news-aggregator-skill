@@ -27,7 +27,7 @@ py scripts/fetch_news.py --source hackernews --limit 1 --no-save   # smoke test
 `tests/` has no `__init__.py`, so `unittest discover` **fails** (`Start directory is not importable`) and discovery from root finds 0 tests. Name modules explicitly — `scripts/` resolves as a PEP 420 namespace package from the repo root:
 
 ```bash
-# Full suite (159 tests, no network)
+# Full suite (170 tests, no network)
 py -m unittest tests.test_default_sources tests.test_fetch_news tests.test_hardening \
   tests.test_llm_summarize tests.test_markdown_tables tests.test_reprocess_articles \
   tests.test_scoring_rules tests.test_social_platforms tests.test_groq_transcribe \
@@ -64,7 +64,7 @@ fetch (raw times preserved) → URL + vault-history dedup → AI candidate selec
 → publish or route to 拒绝集合 → write notes + regenerate 今日总结.md
 ```
 
-Supporting modules: `llm_summarize.py` owns every prompt and batch/retry/split strategy (`select_candidates`, `process_selected_snapshots`, `translate_items`); `llm_client.py` is a dependency-free `urllib` wrapper over the OpenAI **Responses API** that reads credentials and `base_url`/`model` from env vars *or* `~/.codex/auth.json` + `config.toml` (so `codex login` works, including third-party relays); `rss_parser.py`, `fetch_user_feeds.py` (OPML), `social_platforms.py` + `fetch_social_browser.py` (JSON API first, Playwright fallback), `scoring_rules.py` (normalizes source keys and engagement metrics).
+Supporting modules: `llm_summarize.py` owns every prompt and batch/retry/split strategy (`select_candidates`, `process_selected_snapshots`, `translate_items`); `llm_client.py` is a dependency-free `urllib` wrapper over OpenAI-compatible endpoints (**protocol-adaptive**: `LLM_API_MODE=auto` tries `/responses` first and falls back to `/chat/completions` on 404; either can be locked explicitly) that reads credentials and `base_url`/`model` from env vars *or* `~/.codex/auth.json` + `config.toml` (so `codex login` works, including third-party relays); `rss_parser.py`, `fetch_user_feeds.py` (OPML), `social_platforms.py` + `fetch_social_browser.py` (JSON API first, Playwright fallback), `scoring_rules.py` (normalizes source keys and engagement metrics).
 
 `--evidence-mode` is the main cost/quality dial: `metadata` (titles only) → `snapshot` (default; full DOM for AI-selected items) → `full`/`--deep` (same, plus original body text written into notes).
 
@@ -74,7 +74,7 @@ Supporting modules: `llm_summarize.py` owns every prompt and batch/retry/split s
 - **Keep absolute timestamps in the data layer.** Format as `%Y-%m-%d %H:%M`, never bare `%H:%M` — dropping the date caused a fabricated "1h ago".
 - **Trust current CLI stdout over files on disk.** A stale root-level `*_raw.json` once produced a report a month out of date. Data belongs in `reports/YYYY-MM-DD/`; check timestamps before reading any cache.
 - **Empty results breed hallucination.** Hard filters need soft fallbacks (`fetch_reuters` falls back to Google News RSS; keyword queries retry broadly on 0 hits). Quote multi-word terms in boolean search APIs.
-- **Two-tier rejection.** Deterministic rejections (off-topic, low-value, ads, duplicates) persist to `_拒绝索引.json` and are skipped before future AI calls. Transient failures (garbled text, timeouts, thin evidence, LLM errors) appear only on the daily rejection page and stay eligible for retry. Published articles dedupe on `(original title + source)` across dates.
+- **Two-tier rejection.** Deterministic rejections (off-topic, low-value, ads, duplicates) persist to `_拒绝索引.json` and are skipped before future AI calls. Transient failures (garbled text, timeouts, thin evidence, LLM errors) appear only on the daily rejection page and stay eligible for retry. Published articles dedupe on canonical URL (URL identity wins), falling back to title+source only when no URL is present.
 - Only `strongly_recommended` and `optional` reach the daily briefing; everything else goes to `拒绝集合/`.
 
 ### Output layout

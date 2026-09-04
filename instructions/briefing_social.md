@@ -1,6 +1,6 @@
 # 🍉 Daily Social & Gossip Briefing Instructions (今日吃瓜早报)
 
-> **INPUT**: JSON object with `weibo_hot`, `v2ex_hot`, `hn_culture` sections.
+> **INPUT**: JSON object with `v2ex_hot`, `hn_culture` sections.
 > **OUTPUT**: A fun, engaging summary of what the internet is discussing.
 
 ---
@@ -18,16 +18,6 @@
 
 ## 📝 Report Structure
 
-### Part 1: 🔴 Weibo Hot Search (微博热搜)
-*   **Focus**: Social news, Entertainment, National events.
-    *   **Format (Strict 4-Line List)**:
-    ```markdown
-    #### 1. [Title](url)
-    - **Source**: Weibo | **Time**: Real-time | **Heat**: 🔥 2.5m
-    - **Summary**: Quick summary of the drama/event.
-    - **Deep Dive**: 💡 **Context**: Why are people angry/excited? (Background info).
-    ```
-
-### Part 2: 🤓 Geek Drama (极客圈吃瓜)
+### Part 1: 🤓 Geek Drama (极客圈吃瓜)
 *   **Focus**: V2EX debates (e.g., "Salary", "Layoffs", "Marriage").
 *   **Goal**: Show the human side of the tech industry.

@@ -1,11 +1,11 @@
 ---
 name: news-aggregator-skill
-description: "Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 44+ sources including Hacker News, Lobsters, Dev.to, GitHub, arXiv, Hugging Face Papers, AIHOT, TLDR AI, Import AI, BBC, The Guardian, Al Jazeera, France 24, Reuters fallback, AI Newsletters, WallStreetCN, 少数派, InfoQ 中文, Podcasts, and user-defined OPML feeds. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'international news', 'deep analysis', or says '如意如意' to open the interactive menu."
+description: "Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 53 sources including Hacker News, Lobsters, Dev.to, GitHub, arXiv, Hugging Face Papers, AIHOT, TLDR AI, Import AI, BBC, The Guardian, Al Jazeera, France 24, Reuters fallback, AI Newsletters, WallStreetCN, 少数派, InfoQ 中文, Podcasts, and user-defined OPML feeds. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'international news', 'deep analysis', or says '如意如意' to open the interactive menu."
 ---
 
 # News Aggregator Skill
 
-Fetch real-time hot news from 44+ sources (including international news + AI curated aggregators + user-defined OPML feeds), generate deep analysis reports in Chinese.
+Fetch real-time hot news from 53 sources (including international news + AI curated aggregators + user-defined OPML feeds), generate deep analysis reports in Chinese.
 
 ---
 
@@ -76,13 +76,13 @@ Only the **differences** from the universal template:
 | Arg         | Description                                      | Default                |
 | ----------- | ------------------------------------------------ | ---------------------- |
 | `--source`  | Source key(s), comma-separated. See table below. | `all`                  |
-| `--limit`   | Max items per source                             | `15`                   |
+| `--limit`   | Max items per source                             | `10`                   |
 | `--keyword` | Comma-separated keyword filter                   | None                   |
 | `--deep`    | Download article text for richer analysis        | Off                    |
 | `--save`    | Force save to reports dir                        | Auto for single source |
 | `--outdir`  | Custom output directory                          | `reports/YYYY-MM-DD/`  |
 
-### Available Sources (46+ with user OPML)
+### Available Sources (53 with user OPML)
 
 | Category                | Key              | Name                                                                                |
 | ----------------------- | ---------------- | ----------------------------------------------------------------------------------- |
@@ -166,7 +166,7 @@ Write a daily briefing and individual article notes to an Obsidian Vault:
 py scripts/push_to_obsidian.py --vault "D:/Obsidian/自动信息获取"
 ```
 
-默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源按 `config/social_sources.json` 中的关键词发现内容。
+默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源的搜索关键词：bilibili 复用 `user_interests.json` 的 `topics`（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传），douyin 读 `config/social_sources.json`。
 
 The output is `<Vault>/自动获取信息/YYYY-MM-DD/`: article notes are stored in `信息源/<来源中文名>/`, and `今日总结.md` at the date root is regenerated from every article already stored for that day. AI 拒绝结果写入同级的 `拒绝集合/`：每日页面展示全部拒绝与待复核项，`_拒绝索引.json` 供程序执行确定性拒绝的历史去重。
 
@@ -178,7 +178,7 @@ The output is `<Vault>/自动获取信息/YYYY-MM-DD/`: article notes are stored
 2. **Time**: **MANDATORY** field. Never skip. If missing in JSON, mark as "Unknown Time". Preserve "Real-time" / "Today" / "Hot" as-is.
 3. **Anti-Hallucination**: Only use data from the JSON. Never invent news items. Use simple SVO sentences. Do not fabricate causal relationships.
 4. **Keyword Filter**: `--keyword` takes literal comma-separated terms (e.g. `"AI,LLM,GPT"`), matched as word-boundary regex. No automatic expansion.
-5. **Time Window**: 默认只保留发布时间在最近 72 小时内的条目；发布时间缺失或无法解析的条目不进入默认结果。掘金热榜会优先从文章页面的 `time[datetime]` 读取发布时间；GitHub Trending 当前热榜项目是例外，即使最近 push 超过 72 小时也保留，但必须有 GitHub API 提供的 `pushed_at`。可用 `--hours N` 调整普通来源窗口。
+5. **Time Window**（仅命令行 `fetch_news.py` 生效）：默认只保留发布时间在最近 72 小时内的条目（可用 `--hours N` 调整）；发布时间缺失或无法解析的条目不进入默认结果。掘金热榜会优先从文章页面的 `time[datetime]` 读取发布时间；GitHub Trending 当前热榜项目是例外，即使最近 push 超过 72 小时也保留，但必须有 GitHub API 提供的 `pushed_at`。推送流水线 `push_to_obsidian.py` 固定 `--skip-time-filter`（`preserve_raw_time=True`），时间语义由 AI 判断而非硬窗口。
 6. **Smart Fill**: If results < 5 items in a time window, supplement only with other items from the same time window and mark them with ⚠️. 不再使用更早内容补齐；International News sources remain a hard 24h window.
 6. **Save**: Always save report to `reports/YYYY-MM-DD/` before displaying.
 
@@ -222,7 +222,7 @@ When the user says **"如意如意"** or asks for "menu/help":
 | 原文标题 | 文本 | 原始标题 |
 | 文章总结 | 文本 | 文章级中文总结或明确的回退说明 |
 | 来源 | 文本 | 文章来源 |
-| 分类 | 文本 | tech / social / finance / ai / international |
+| 分类 | 文本 | ai / programmer / github / frontend / social / other |
 | 链接 | URL | 原文链接 |
 | 热度 | 数字 | HN points / GitHub stars / 热榜排名等 |
 | 发布时间 | 日期 | 原始发布时间 |
@@ -254,7 +254,7 @@ Windows 使用 `scripts/run_daily.ps1` 作为任务计划程序入口。运行�
 
 默认主题覆盖前端工程、人工智能与 AI 工程、后端开发、开发工具和开源项目。可用 `--topics "LLM,Agent,RAG,端侧 AI"` 传入自定义主题。
 
-AI 根据用户主题、页面快照中的可验证证据、内容完整度、时间语义和同来源互动信号自主给出 0-100 质量分及推荐等级，不使用固定权重。推荐等级只能是 `strongly_recommended`、`optional` 或 `not_recommended`，且必须附带具体理由。
+AI 根据用户主题、页面快照中的可验证证据、内容完整度、时间语义自主给出 0-100 质量分及推荐等级（质量分不使用固定权重）；同来源互动信号由固定公式计算互动辅助分（engagement_score，见 scoring_rules.py），两者独立写入笔记。推荐等级只能是 `strongly_recommended`、`optional` 或 `not_recommended`，且必须附带具体理由。
 
 只有前两档会写入文章和日报。不推荐或 AI 处理失败的内容不进入正常日报，而是写入 `<Vault>/自动获取信息/拒绝集合/`；其中确定性拒绝同时进入 `_拒绝索引.json`，临时失败保留后续重试机会。AI 必须返回逐条 `evidence_points`，文章笔记和拒绝页展示真实判断依据，不再使用统一证据套话。文章 frontmatter 包含推荐结果、快照状态以及 AI 的时间类型、时间置信度和时间证据。
 
@@ -273,15 +273,13 @@ Bilibili 已纳入常规 Obsidian 日报的默认来源列表；抖音仍可通�
 python scripts/fetch_news.py --source douyin,bilibili --limit 5 --keyword "前端,AI,软件工程"
 ```
 
-适配器优先使用显式配置的 JSON API：`SOCIAL_API_URL_DOUYIN`、
-`SOCIAL_API_URL_BILIBILI`、`SOCIAL_API_URL_WEIBO`、`SOCIAL_API_URL_WECHAT`；可选的
+适配器优先使用显式配置的 JSON API：`SOCIAL_API_URL_DOUYIN`、`SOCIAL_API_URL_BILIBILI`（当前仅这两个平台已接入）；可选的
 `SOCIAL_API_TOKEN_<PLATFORM>` 会作为 Bearer Token 发送。未配置或调用失败时，降级到
 Playwright 公开搜索页。浏览器会话目录可通过 `NEWS_AGGREGATOR_BROWSER_PROFILE` 配置，
 不要把 Cookie、Token 或会话目录提交到仓库。
 
 社交平台抓取标题、简介、作者、发布时间和可见互动数据。Bilibili 和抖音只保留真实视频链接，
-不下载视频；视频字幕、ASR 和 OCR 属于后续扩展能力。
-`mp.weixin.qq.com/s` 文章，并过滤官网、百科和明确推广内容。
+不下载视频；视频内容已接入两级转录：①平台字幕 API（bilibili，cookie）②Groq Whisper 语音兜底（fetch_news 视频分支，method="groq_transcript"）。
 
 GitHub Trending 继续保留热榜排名，并通过 GitHub API 补充仓库最近一次 `pushed_at`；笔记中将其标为“最近推送时间”，不将其误称为发布时间。普通 GitHub 搜索结果仍遵守默认 24 小时窗口。
 

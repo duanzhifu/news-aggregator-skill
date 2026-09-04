@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.push_to_obsidian import (
+    TODAY,
     article_read_key,
     build_article_markdown,
     build_daily_summary_markdown,
@@ -659,7 +660,7 @@ class MarkdownTableTests(unittest.TestCase):
                     saved=True,
                 )
             root = vault / "自动获取信息"
-            date_dir = root / "2026-09-03"
+            date_dir = root / TODAY
             # 笔记生成 + 收藏理由写入 frontmatter
             note_files = list((date_dir / "信息源" / "juejin.cn").glob("*.md"))
             self.assertEqual(1, len(note_files))
@@ -676,7 +677,7 @@ class MarkdownTableTests(unittest.TestCase):
             self.assertEqual(1, len(manual))
             self.assertEqual("因为正在做 Agent", manual[0].get("reason"))
             self.assertEqual("juejin.cn", manual[0].get("source"))
-            self.assertEqual("2026-09-03", manual[0].get("first_seen"))
+            self.assertEqual(TODAY, manual[0].get("first_seen"))
 
     def test_add_manual_urls_ai_kept_and_rejected(self):
         from scripts.push_to_obsidian import add_manual_urls
@@ -689,7 +690,7 @@ class MarkdownTableTests(unittest.TestCase):
                        return_value=[{"ai_selected": True, "selection_reason": "与主题相关"}]), \
                  patch("scripts.push_to_obsidian.summarize_daily", return_value={}):
                 add_manual_urls(["https://example.com/a"], str(vault), saved=False)
-            date_dir = vault / "自动获取信息" / "2026-09-03"
+            date_dir = vault / "自动获取信息" / TODAY
             note_files = list((date_dir / "信息源" / "example.com").glob("*.md"))
             self.assertEqual(1, len(note_files))
             # 情况 1 不直接进收藏集合（等用户勾选）
@@ -706,7 +707,7 @@ class MarkdownTableTests(unittest.TestCase):
                        return_value=[{"ai_selected": False, "selection_reason": "与主题无关"}]), \
                  patch("scripts.push_to_obsidian.summarize_daily", return_value={}):
                 add_manual_urls(["https://example.com/b"], str(vault), saved=False)
-            date_dir = vault / "自动获取信息" / "2026-09-03"
+            date_dir = vault / "自动获取信息" / TODAY
             note_files = list((date_dir / "信息源" / "example.com").glob("*.md"))
             self.assertEqual(0, len(note_files))
 

@@ -15,7 +15,7 @@ description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 
 
 ```json
 [
-  {/
+  {
     "source": "GitHub Trending",
     "title": "owner/repo - Project description in English",
     "url": "https://github.com/...",
@@ -36,7 +36,6 @@ description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 
   "batch_summary": "",
   "source_summaries": {
     "GitHub Trending": "GitHub 今日三大趋势：① ... ② ... ③ ...",
-    "微博热搜": "微博热搜今日以 ... 为主 ...",
     "腾讯新闻": "腾讯新闻今日 ... "
   },
   "items": [
@@ -120,11 +119,16 @@ description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 
 
 ## 🔧 常见分类与源映射
 
-- `tech`: `github`, `hackernews`, `user` 等技术源
-- `ai`: `huggingface`, `arxiv`, `import_ai`, `tldr_ai`, `aihot` 等 AI 专区
-- `finance`: `36kr`, `wallstreetcn` 等财经创投源
-- `social`: `douyin`, `bilibili`, `tencent` 等热搜社会源
-- `international`: `bbc_top`, `bbc_world`, `guardian_world` 等国际新闻源
+代码实际分类值（`CATEGORY_MAP` / `CATEGORY_CN`，见 push_to_obsidian.py）：
+
+- `ai`: `huggingface`, `arxiv`, `import_ai`, `tldr_ai`, `aihot`, `ai_newsletters`, `openai`, `anthropic`, `latentspace_ainews` 等 AI 专区
+- `programmer`: `hackernews`, `lobsters`, `devto`, `devto_react`, `v2ex` 等程序员社区
+- `github`: `github` 趋势榜
+- `frontend`: `react_blog`, `juejin`, `sspai` 等前端与中文科技
+- `social`: `douyin`, `bilibili`, `youtube_tech` 等社交平台技术内容
+- `other`: 未映射的源（如 `36kr`、`tencent`、`wallstreetcn`、`producthunt`、`infoq_cn`、`international`、`reuters` 等）
+
+> 注：`tech` / `finance` / `international` 分类当前代码未实现；未映射源统一落入 `other`。
 
 ---
 
