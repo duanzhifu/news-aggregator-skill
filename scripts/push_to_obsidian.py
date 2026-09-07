@@ -1612,6 +1612,22 @@ def select_for_ai_fetch(news_items, topics=None, recency_days=7, reject=None, us
     return select_candidates(news_items, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile)
 
 
+def _dead_dynamic_topics(selection):
+    """找出动态搜索中「所有结果都被 AI 拒绝」的主题。
+
+    动态 item 带 topic_matched 字段（RSS 固定源没有）；某主题的所有动态结果
+    ai_selected 全为 False，说明搜索引擎（AnySearch）对该主题市场错位/义项漂移
+    （如 trellis 搜成园艺花架），需回退 Bing 登录态重搜该主题。
+    """
+    by_topic = {}
+    for item in selection:
+        topic = item.get('topic_matched')
+        if not topic:
+            continue
+        by_topic.setdefault(topic, []).append(item)
+    return [t for t, items in by_topic.items() if items and not any(i.get('ai_selected') for i in items)]
+
+
 def process_ai_snapshots(items, batch_tag, topics=None, recency_days=7, reject=None, user_profile=None):
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
@@ -1960,6 +1976,24 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
 
             selection = select_for_ai_fetch(news_items, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile)
             candidates = [item for item in selection if item.get('ai_selected') is True]
+
+            # AnySearch 兜底：动态主题结果被 AI 全部拒绝（如 trellis 搜成园艺花架），
+            # 说明 AnySearch 对该主题市场错位/义项漂移，回退 Bing 登录态重搜该主题。
+            dead_topics = _dead_dynamic_topics(selection)
+            if dead_topics:
+                print(f"[DynamicSearch] 检测到 {len(dead_topics)} 个主题 AnySearch 结果全部被拒，回退 Bing 登录态重搜: {dead_topics}")
+                try:
+                    bing_items = fetch_dynamic_search_news(dead_topics, limit_per_topic=dynamic_limit, engine="bing")
+                    if bing_items:
+                        bing_selection = select_for_ai_fetch(bing_items, topics=topics, recency_days=recency_days, reject=reject, user_profile=user_profile)
+                        bing_candidates = [item for item in bing_selection if item.get('ai_selected') is True]
+                        if bing_candidates:
+                            print(f"[DynamicSearch] Bing 兜底命中 {len(bing_candidates)} 条")
+                        selection.extend(bing_selection)
+                        candidates.extend(bing_candidates)
+                except Exception as e:
+                    print(f"[DynamicSearch Warning] Bing 兜底执行异常，忽略: {e}", file=sys.stderr)
+
             rejected_selection = []
             for item in selection:
                 if item.get('ai_selected') is True:

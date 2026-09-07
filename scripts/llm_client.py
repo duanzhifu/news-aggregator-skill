@@ -1,6 +1,8 @@
 """读取 skill 本地 .env 的 LLM_* 配置，调用 OpenAI 兼容协议（/responses 或 /chat/completions）进行翻译和总结。"""
 import json
 import os
+import time
+import http.client
 import urllib.request
 import urllib.error
 import re
@@ -168,32 +170,36 @@ class _ProtocolUnsupported(Exception):
 
 def _http_post_json(path, payload):
     data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-    req = urllib.request.Request(
-        f"{API_BASE}{path}",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-        method="POST",
-    )
-    try:
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    last_error = None
+    for attempt in range(3):
+        req = urllib.request.Request(f"{API_BASE}{path}", data=data, headers=headers, method="POST")
         try:
-            timeout = max(1.0, float(os.environ.get("LLM_API_TIMEOUT_SECONDS", "120")))
-        except ValueError:
-            timeout = 120.0
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        code = e.code
-        low = body.lower()
-        # 商汤 /responses 返回 {"error":{"code":5,"message":"NOT_FOUND"}}，HTTP 404
-        if code in (404, 405, 501) or '"not_found"' in low or '"not found"' in low:
-            raise _ProtocolUnsupported(f"HTTP {code}: {body[:200]}") from e
-        raise RuntimeError(f"LLM API HTTP {code}: {body[:500]}")
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise RuntimeError(f"LLM API 连接失败: {e}") from e
+            try:
+                timeout = max(1.0, float(os.environ.get("LLM_API_TIMEOUT_SECONDS", "120")))
+            except ValueError:
+                timeout = 120.0
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            # HTTP 4xx/5xx 是协议错误，重试无意义，直接抛（/responses 不支持降级判断）
+            body = e.read().decode('utf-8', errors='replace')
+            code = e.code
+            low = body.lower()
+            if code in (404, 405, 501) or '"not_found"' in low or '"not found"' in low:
+                raise _ProtocolUnsupported(f"HTTP {code}: {body[:200]}") from e
+            raise RuntimeError(f"LLM API HTTP {code}: {body[:500]}")
+        except (http.client.IncompleteRead, urllib.error.URLError, TimeoutError, OSError) as e:
+            # 连接类瞬态错误（服务端断连/读超时/网络抖动），退避后重试
+            last_error = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"LLM API 连接失败: {e}") from e
+    raise RuntimeError(f"LLM API 连接失败: {last_error}") from last_error
 
 
 def _parse_response_text(res):
