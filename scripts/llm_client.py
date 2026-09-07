@@ -158,9 +158,11 @@ def _ensure_auth():
 
 
 # -------------------- 协议自适应（responses / chat_completions）--------------------
-# 默认 LLM_API_MODE=auto：先试 /responses，若提供方不支持（404/协议错误）自动降级 /chat/completions。
+# 默认 LLM_API_MODE=auto：先试 /responses，若提供方不支持（404/协议错误/响应无答案文本）自动降级 /chat/completions。
 # 显式设 LLM_API_MODE=responses 或 chat 可锁定单一协议。选择结果记到 _RESOLVED_PROTOCOL，
-# 避免每次调用都先撞一次 404。timicc.com 两种都支持；商汤 sensenova 仅 /chat/completions。
+# 避免每次调用都先撞一次 404。商汤 sensenova 仅 /chat/completions（/responses 404）；
+# timicc.com 的 /responses 对 reasoning 模型返回 200 但只有 reasoning 条目、无答案文本（2026-09-07 实测），
+# 靠 _parse_response_text 抛 _ProtocolUnsupported 降级到 /chat/completions 才正常。
 _RESOLVED_PROTOCOL = None
 
 
@@ -221,7 +223,13 @@ def _parse_response_text(res):
                 for content in output.get('content', []):
                     if content.get('type') == 'output_text':
                         return content['text'].strip()
-        return res.get('output_text', '').strip()
+        output_text = (res.get('output_text') or '')
+        if output_text.strip():
+            return output_text.strip()
+        # 响应有 output 但拿不到答案文本（如 reasoning-only 模型经 /responses 返回：
+        # 只有 type=reasoning 条目、无 message 条目、无 output_text）——按“协议不兼容”处理，
+        # 让 auto 模式降级到 /chat/completions，避免假成功返回空串（2026-09-07 画像空返回根因）。
+        raise _ProtocolUnsupported("Responses API 响应无答案文本（output 无 message 条目且无 output_text）")
     # 兜底
     return res.get('output_text', '').strip() if isinstance(res, dict) else ''
 
