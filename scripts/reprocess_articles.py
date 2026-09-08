@@ -43,6 +43,9 @@ from push_to_obsidian import (
     build_daily_summary_markdown,
     group_items_by_source,
     load_articles_for_date,
+    normalize_article_path,
+    parse_daily_read_states,
+    parse_daily_saved_states,
 )
 
 
@@ -74,6 +77,15 @@ def set_frontmatter_value(text, key, value):
     if end == -1:
         raise ValueError('无效的 YAML frontmatter')
     return text[:end] + '\n' + line + text[end:]
+
+
+def _article_key_relative_to(date_dir, abs_path):
+    """把绝对路径换算成今日总结勾选 key 格式（./信息源/<来源>/<文件名>）。"""
+    try:
+        rel = Path(abs_path).relative_to(date_dir)
+    except ValueError:
+        return None
+    return normalize_article_path('./' + rel.as_posix())
 
 
 def translate_metadata_for_date(root, date_value):
@@ -183,6 +195,23 @@ def translate_metadata_for_date(root, date_value):
         success_count += 1
         print(f'  [已翻译] {new_path.name}')
 
+    # 重建今日总结前保留已读/已收藏勾选：
+    # 翻译会重命名文章（旧文件名 → 新文件名），勾选 key 跟随文章路径，需同步换 key。
+    daily_path = date_dir / '今日总结.md'
+    read_states = {}
+    saved_states = {}
+    if daily_path.exists():
+        old_text = daily_path.read_text(encoding='utf-8')
+        read_states = parse_daily_read_states(old_text)
+        saved_states = parse_daily_saved_states(old_text)
+        for old_abs, new_abs in rename_map.items():
+            old_key = _article_key_relative_to(date_dir, old_abs)
+            new_key = _article_key_relative_to(date_dir, new_abs)
+            if old_key and old_key in read_states:
+                read_states[new_key] = read_states.pop(old_key)
+            if old_key and old_key in saved_states:
+                saved_states[new_key] = saved_states.pop(old_key)
+
     daily_items = load_articles_for_date(date_dir)
     by_source, _ = group_items_by_source(daily_items)
     source_summaries = {source: f'{source} 今日收录 {len(items)} 篇文章。' for source, items in by_source.items()}
@@ -190,6 +219,8 @@ def translate_metadata_for_date(root, date_value):
         source_summaries,
         by_source,
         report_date=date_value,
+        read_states=read_states,
+        saved_states=saved_states,
     )
     (date_dir / '今日总结.md').write_text(daily_text, encoding='utf-8')
     print(f'元数据翻译完成：成功 {success_count} 篇，失败 {failed_count} 篇；日报收录 {len(daily_items)} 篇。')
