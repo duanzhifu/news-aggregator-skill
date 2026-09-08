@@ -275,7 +275,6 @@ When the user says **"如意如意"** or asks for "menu/help":
 | `scripts/fetch_news.py` | 抓取一个或多个信息源，输出 JSON |
 | `scripts/push_to_obsidian.py` | 抓取、翻译、生成总结并写入 Obsidian |
 | `scripts/reprocess_articles.py` | 重新处理已经写入 Obsidian 的文章 |
-| `scripts/rebuild_content.py` | 从已有文章重建日报内容 |
 
 ### 去重规则
 

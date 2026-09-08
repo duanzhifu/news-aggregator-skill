@@ -1419,60 +1419,6 @@ def collect_metric_columns(items_list):
     return [k for k, _ in sorted(counter.items(), key=lambda x: sort_key(x[0]))]
 
 
-def build_source_index_markdown(source_cn, category, items, source_summary, items_by_date=None):
-    """生成来源索引页（无 H1 标题，直接进表格，含跳转链接、文章总结、指标）。"""
-    lines = [
-        '---',
-        f'来源: "{source_cn}"',
-        f'分类: "{CATEGORY_CN.get(category, category)}"',
-        f'抓取日期: "{TODAY}"',
-        f'文章数: {len(items)}',
-        f'标签: ["信息源", "{category}", "来源-{source_cn}"]',
-        '---',
-        '',
-        '## 最近文章（按发布时间倒序）',
-        '',
-    ]
-
-    sorted_items = sorted(items, key=lambda x: parse_publish_datetime(x)[1], reverse=True)
-    metric_cols = collect_metric_columns(sorted_items)
-    base_cols = ['发布时间', '中文标题', '文章总结']
-    extra_cols = [c for c in metric_cols if c not in base_cols]
-    headers = base_cols + extra_cols
-    lines.append('| ' + ' | '.join(headers) + ' |')
-    lines.append('|' + '|'.join([' --- '] * len(headers)) + '|')
-
-    for item in sorted_items:
-        title_zh = item.get('title_zh', item.get('title', ''))
-        title_orig = item.get('title', '')
-        pub_time_full = format_time_display(item)
-        pub_date, _ = parse_publish_datetime(item)
-        filename = build_article_filename(item, pub_date)
-        # 索引页和文章在同一目录，用相对路径 ./文件名
-        rel_path = f"./{filename}".replace(' ', '%20')
-        summary_zh = get_article_summary(item)
-        # 清理"查看全文"等噪音
-        summary_clean = clean_summary(summary_zh)
-        # 关键：去掉所有可能破坏表格的字符
-        summary_clean = summary_clean.replace('|', '/').replace('\n', ' ').replace('\r', ' ')
-        # 显示用的标题也做同样清理（避免破坏表格），并转义 # 防 Obsidian 渲染成 tag
-        display_title = escape_link_title((title_zh or title_orig).replace('|', '/').replace('\n', ' ').replace('\r', ' '))
-        # 文件路径里的空格需要编码，管道符不允许
-        safe_rel_path = rel_path.replace('|', '/').replace(' ', '%20')
-        metrics = extract_metrics(item)
-        # 用标准 Markdown 链接 [文字](路径)，避免 wiki 链接的 | 破坏表格
-        row = [
-            pub_time_full,
-            f"[{display_title}]({safe_rel_path})",
-            summary_clean or '-',
-        ]
-        for c in extra_cols:
-            row.append(metrics.get(c, '-'))
-        lines.append('| ' + ' | '.join(row) + ' |')
-    lines.append('')
-    return '\n'.join(lines)
-
-
 def build_daily_summary_markdown(source_summaries_cn, items_by_source_cn, report_date=None, read_states=None, saved_states=None):
     """生成每日批次总结页（按信源分段）。"""
     report_date = report_date or TODAY
