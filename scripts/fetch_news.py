@@ -387,15 +387,6 @@ def fetch_url_content(url):
         return ""
 
 
-def fetch_url_evidence(url, max_bytes=5 * 1024 * 1024, max_chars=None):
-    """Return complete extracted article text for evidence processing.
-
-    ``max_chars`` remains available for callers that explicitly need an excerpt.
-    """
-    evidence, _ = _fetch_url_evidence_with_method(url, max_bytes=max_bytes, max_chars=max_chars)
-    return evidence
-
-
 def _fetch_url_evidence_with_method(url, max_bytes=5 * 1024 * 1024, max_chars=None):
     """Return readable article evidence and the method used to obtain it."""
     if not url:
@@ -1002,7 +993,6 @@ def fetch_latentspace_ainews(limit=5, keyword=None):
             pub_date = pub_tag.get_text(strip=True) if pub_tag else ""
             # Simplify date if possible
             try:
-                from email.utils import parsedate_to_datetime
                 dt = parsedate_to_datetime(pub_date)
                 pub_date = dt.strftime('%Y-%m-%d')
             except Exception:

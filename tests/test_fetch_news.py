@@ -34,14 +34,6 @@ class DecodingRaw:
 
 
 class PlaywrightRssFallbackTests(unittest.TestCase):
-    def test_evidence_fetch_can_use_an_explicit_excerpt_and_extracts_dom_text(self):
-        html = b"<html><body><article><h1>Title</h1><p>Useful evidence paragraph.</p></article></body></html>"
-        with patch.object(fetch_news, "_fetch_public_url", return_value=html) as request:
-            evidence = fetch_news.fetch_url_evidence("https://example.test/a", max_chars=30)
-        self.assertLessEqual(len(evidence), 30)
-        self.assertIn("Title", evidence)
-        self.assertEqual(5 * 1024 * 1024, request.call_args.kwargs["max_bytes"])
-
     def test_streamed_response_decodes_compressed_content(self):
         html = b"<html><body>decoded text</body></html>"
         payloads = {
