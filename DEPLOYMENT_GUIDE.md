@@ -30,6 +30,7 @@
 - Git
 - Obsidian（仅在使用导出功能时需要）
 - LLM API Key 写入 skill 本地 `.env` 的 `LLM_API_KEY`，OpenAI 兼容端点即可（支持 `/chat/completions`；`/responses` 可选，`LLM_API_MODE=auto` 自动探测降级。仅在使用 LLM 总结和 Obsidian 导出时需要）
+- 动态搜索另需可选 `ANYSEARCH_API_KEY`（默认引擎，不配走匿名低限额 + Bing 兜底）
 
 ### 拉取项目
 
@@ -143,16 +144,48 @@ python scripts/push_to_obsidian.py `
 
 | 参数 | 作用 |
 | --- | --- |
-| `--topics` | 用于 AI 候选准入和最终质量判断的关注主题 |
+| `--topics` | 用于 AI 候选准入和最终质量判断的关注主题（默认读 `user_interests.json` 的 `topics`） |
+| `--dynamic-limit` | 动态搜索每主题条数；默认读 `user_interests.json` 的 `limit_per_topic`，定时任务由 `run_daily.ps1` 自动注入 |
 | `--recency-days` | 提供给 AI 的近期优先参考天数；不是程序硬过滤窗口 |
 | `--profile` | 批次标签，供运行记录与后续扩展使用 |
 | `--evidence-mode metadata` | 只把标题和来源摘要交给 AI，最快但证据最少 |
 | `--evidence-mode snapshot` | 默认；只对 AI 入选项读取完整 DOM 正文，逐段审阅后再判断 |
 | `--evidence-mode full` / `--deep` | 同样全文审阅，并将原文正文写入 Obsidian 笔记 |
 
+正文提取默认用 **trafilatura**（自动剔除广告/导航/cookie 横幅，输出 Markdown），命中失败时回退 BeautifulSoup 选择器，再失败返回空并由 Playwright 重试接管；`--evidence-mode snapshot` 下提取的正文同时作为 AI 评估证据与 `--deep` 时的笔记原文正文。
+
 AI 返回 `strongly_recommended` 或 `optional` 的内容才会写入正常日报；其他项目进入 Obsidian 的 `拒绝集合/`。主题不符、低价值、过期、广告或重复内容等确定性拒绝会写入结构化索引，并在以后调用 AI 前跳过；正文乱码、超时、证据不足和 AI 失败只进入每日页面，后续仍可重新评估。已发布文章按规范化 URL 跨日期去重（URL identity wins）；仅当条目无可靠 URL 时，才回退到 (标准化标题 + 来源)。
 
 AI 时间判断会保存标准时间、时间类型、置信度和原始证据。缺少时间不会被程序直接删除，GitHub 最近推送、页面更新时间和榜单采集时间也不会被误称为首次发布时间。
+
+### 手动收藏 URL
+
+想直接收藏某篇文章（不进每日拉取流程）：
+
+```powershell
+python scripts/push_to_obsidian.py `
+  --vault "D:\\Obsidian\\自动信息获取" `
+  --add-url "https://example.com/article" `
+  --note "为什么收藏它" `
+  --saved
+```
+
+- 不加 `--saved`：先由 AI 判断该 URL 值不值得看，值得才入库（进当天 `今日总结.md`）；加 `--saved`：跳过 AI 判断，直接写入收藏集合并生成笔记。
+- 笔记落 `信息源/<站点域名>/`，frontmatter `收藏理由` 字段可补写。
+- 收藏集合：`自动获取信息/收藏集合/收藏.md`（收藏时间 | 来源 | 文章 | 收藏理由），跨日汇总；收藏时间 = 首次观察到勾选的扫描日-1；取消勾选即删除。
+
+### 视频转文章（video_to_article.py）
+
+把单个视频快速整理成结构化中文文章（转录 → 成文 → 四件套落盘），与每日拉取管线独立：
+
+```powershell
+python scripts/video_to_article.py <视频URL | 本地视频文件 | 视频文件夹> [--out 输出根] [--topic 专题名] [--no-frames]
+```
+
+- **输入**：bilibili URL（字幕 API → Groq whisper 兜底）、本地文件（ffmpeg 抽音频 → Groq）、文件夹（串行批量，单个失败不中断）。
+- **四件套**：AI 总结（分节正文 + 要点，带 mm:ss 时间点）、截图（本地文件按小节抽帧，`--no-frames` 关闭）、思维导图（Mermaid 流程图）、完整文稿（折叠 callout）。大纲放文章开头。`--net-frames` 已占位未实现（网络视频本版不抽截图，接受但跳过）。
+- **去重**：同专题转录文本 simhash 高度重合时文章开头插入重合提示；`--force` 强制重跑。
+- **依赖**：ffmpeg（本机 winget Gyan.FFmpeg）+ `.env` 的 `GROQ_API_KEY`；单文件音频 ≤25MB（64k ≈ 52 分钟）。LLM 成文超时已放宽到 600s，但长视频成文仍可能耗时数分钟。
 
 ## 5. 社交平台技术内容
 
@@ -163,9 +196,11 @@ AI 时间判断会保存标准时间、时间类型、置信度和原始证据�
 | `douyin` | 抖音 | 可配置 JSON API 优先，失败后 Playwright 公开搜索页 |
 | `bilibili` | Bilibili | 可配置 JSON API 优先，失败后 Playwright 公开搜索页 |
 
+视频源（bilibili / youtube_tech）的正文证据：bilibili 优先走 cookie 字幕 API 拿真实中文 AI 字幕（`video_transcribe.py`，复用浏览器 Profile 登录态）；无字幕或失败时降级 Groq whisper 云端转写（`groq_transcribe.py`，yt-dlp 下载音频）；两者都失败才回退标题+简介。
+
 ### 配置关键词
 
-bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `run_daily.ps1` 注入），仅在无 topics 时兜底读取 [`config/social_sources.json`](config/social_sources.json)；`douyin` 仍默认读该文件。可直接编辑其中的 `keywords`：
+bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承），仅在无 topics 时兜底读取 [`config/social_sources.json`](config/social_sources.json)；`douyin` 仍默认读该文件。可直接编辑其中的 `keywords`：
 
 ```json
 {
@@ -194,7 +229,7 @@ python scripts/fetch_news.py `
   --no-save
 ```
 
-默认情况下每个平台最多查询 5 个关键词。可用 `SOCIAL_MAX_QUERIES` 降低或提高这个上限：
+默认情况下每个平台最多查询 15 个关键词。可用 `SOCIAL_MAX_QUERIES` 降低或提高这个上限（每关键词默认取 `max(2, min(limit, 5))` 条结果）：
 
 ```powershell
 $env:SOCIAL_MAX_QUERIES = "3"
@@ -233,6 +268,18 @@ python scripts/push_to_obsidian.py `
   --evidence-mode snapshot `
   --vault "D:\\Obsidian\\自动信息获取"
 ```
+
+### 动态搜索（AnySearch 默认引擎）
+
+每日动态搜索（`user_interests.json` 的 `topics` → `--topics`）默认走 **AnySearch**（`scripts/fetch_dynamic_search.py`，`engine="anysearch"`）。需在 skill 本地 `.env` 配置：
+
+```powershell
+ANYSEARCH_API_KEY=<在这里填入 AnySearch 真实 key,勿提交>   # https://anysearch.com/console/api-keys
+```
+
+未配置时以匿名低限额运行；某主题全部动态结果被 AI 拒绝后，管线自动用 Bing 登录态（`cn.bing.com` + `setmkt=zh-CN`）兜底重搜。日志分别打 `[AnySearch]`（成功）、`[AnySearch Error]`（失败）、`[DynamicSearch]`（Bing 兜底/结果）。
+
+搜索词消歧开关：`user_interests.json` 的 `search_query_optimization`（默认 `false`）。开启后每个 topic 先经 LLM 消歧为 1~3 个变体并全搜合并（机制甲：多变体每变体收敛为 2 条，全搜不漏方向；不采用「只搜最优变体」——赌错义项且成功返回会导致整批报废）。默认关闭零成本，仅当动态搜索英文多义词（如 trellis）返回错误义项时开启；LLM 消歧失败自动回退原词直搜。
 
 ## 6. Windows 定时任务
 

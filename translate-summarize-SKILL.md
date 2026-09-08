@@ -41,7 +41,7 @@ description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 
   "items": [
     {
       "title_zh": "中文标题（翻译后）",
-      "title_raw": "原始英文/中文标题",
+      "title": "原始英文/中文标题",
       "source": "GitHub Trending",
       "category": "tech",
       "url": "https://github.com/...",
@@ -134,12 +134,4 @@ description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 
 
 ## 🏷️ 标签规则
 
-根据正文/标题关键词自动打标：
-
-- **AI**: `AI`, `LLM`, `GPT`, `Claude`, `Agent`, `RAG`, `diffusion`
-- **开源**: `开源`, `open source`, `MIT`, `Apache`
-- **创业**: `创业`, `startup`, `融资`, `funding`
-- **金融**: `金融`, `finance`, `stock`, `market`
-- **安全**: `安全`, `security`, `hack`, `vulnerability`
-- **移动**: `移动`, `iOS`, `Android`, `app`
-- **日前**: `前端`, `frontend`, `React`, `Vue`
+文章笔记 frontmatter `标签` 由 `push_to_obsidian.py` 按固定模板生成（`['新闻', 分类, '来源-<来源中文名>', '抓取日期-<日期>']`），不按正文/标题关键词自动打标。

@@ -1,6 +1,6 @@
 # 🍉 Daily Social & Gossip Briefing Instructions (今日吃瓜早报)
 
-> **INPUT**: JSON object with `v2ex_hot`, `hn_culture` sections.
+> **INPUT**: JSON object with `v2ex` (V2EX 热帖) sections.
 > **OUTPUT**: A fun, engaging summary of what the internet is discussing.
 
 ---

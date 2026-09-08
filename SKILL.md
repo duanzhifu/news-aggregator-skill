@@ -35,7 +35,7 @@ Read the output JSON and format **every** item using the **Unified Report Templa
 
 ### Step 3: Save & Present
 
-Save the report to `reports/YYYY-MM-DD/<source>_report.md`, then display the full content to the user.
+Save raw JSON to `reports/YYYY-MM-DD/`（单源默认自动保存；`--no-save` 只输出 stdout），then display the full content to the user.
 
 ---
 
@@ -47,7 +47,7 @@ Save the report to `reports/YYYY-MM-DD/<source>_report.md`, then display the ful
 #### N. [标题 (中文翻译)](https://original-url.com)
 
 - **Source**: 源名 | **Time**: 时间 | **Heat**: 🔥 热度值
-- **Links**: [Discussion](hn_url) | [GitHub](gh_url) ← 仅在数据存在时显示
+- **Links**: [Discussion](hn_url) ← 仅在数据存在时显示（如 Hacker News 讨论帖；GitHub 项链接即 `url` 本身，无需额外字段）
 - **Summary**: 一句话中文摘要。
 - **Deep Dive**: 💡 **Insight**: 深度分析（背景、影响、技术价值）。
 ```
@@ -109,6 +109,7 @@ Only the **differences** from the universal template:
 |                         | `memia`          | Memia                                                                               |
 |                         | `aitoroi`        | AI to ROI                                                                           |
 |                         | `kdnuggets`      | KDnuggets                                                                           |
+|                         | `latentspace_ainews` | Latent Space AINews (swyx)                                                     |
 | **Chinese** (v2)        | `sspai`          | 少数派                                                                              |
 |                         | `infoq_cn`       | InfoQ 中文站（RSS 只给标题，**推荐配 `--deep`** 拿正文）                            |
 |                         | `juejin`         | 掘金热榜                                                                            |
@@ -137,6 +138,7 @@ Only the **differences** from the universal template:
 | **Custom** (v2)         | `user`           | Your OPML feeds (see below)                                                         |
 | **Social**              | `douyin`         | Douyin technical-content discovery                                                  |
 |                         | `bilibili`       | Bilibili technical-content discovery                                                |
+|                         | `youtube_tech`   | YouTube 科技频道                                                                    |
 
 ### 自定义订阅源 (User OPML)
 
@@ -167,6 +169,43 @@ py scripts/push_to_obsidian.py --vault "D:/Obsidian/自动信息获取"
 ```
 
 默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源的搜索关键词：bilibili 复用 `user_interests.json` 的 `topics`（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传），douyin 读 `config/social_sources.json`。
+
+动态搜索默认走 **AnySearch** 引擎（`.env` 配 `ANYSEARCH_API_KEY`，`fetch_dynamic_search.py`）；主题全部被拒时自动降级 **Bing 登录态**兜底重搜（`cn.bing.com` + `setmkt=zh-CN`）。诊断动态搜索问题先看日志 `[AnySearch]`/`[AnySearch Error]`/`[DynamicSearch]` 行，再按兜底链定位。
+
+`user_interests.json` 的 `search_query_optimization`（默认 `false`）控制**搜索词 LLM 消歧**：开启时每个 topic 先经 LLM 消歧为 1~3 个变体、全搜合并（多变体每变体降为 2 条），用于英文多义词（如 trellis）防错义项；默认关闭零成本，仅在动态搜索英文多义词 topic 翻车时开启。消歧失败自动回退原词直搜，不影响主流程。
+
+### 用户画像注入（评估个性化）
+
+每日拉取前，管线从主库 `D:\Obsidian\智能知识库` 读取 3 份材料（个人档案.md + 能力地图.md + 最近 3 篇项目进度按日纪要），由 LLM 提炼成一段 ~1200 字的「我是谁 / 我在做什么 / 我现在需要什么」画像，注入 AI 候选准入（`build_candidate_selection_prompt`）与最终推荐（`build_snapshot_processing_prompt`）两个判断层；**纯事实提取段不注入**（省 token）。
+
+**缓存机制**：材料 sha256 不变 → 延用 `reports/user_profile_cache.json` 缓存画像（零 LLM 调用）；材料变化才重新提炼并更新缓存 + 写当日 `reports/<日期>/user_profile.md` 快照。⚠️ 修改提炼 prompt 语义后必须删除缓存文件（缓存键是材料哈希，不含 prompt 版本）。画像失败自动回退按原 topics 判断，不阻断拉取。管线只读主库、不写 Obsidian 库。
+
+### 手动收藏（--add-url）与收藏集合
+
+除在 `今日总结.md` 表格末列勾选「是否收藏」外，可直接命令收藏：
+
+```
+py scripts\push_to_obsidian.py --vault <信息流库根> --add-url <URL> [--note 理由] [--saved]
+```
+
+- `--add-url` 可重复多传；默认先 AI 判断值不值得看，值得才生成笔记并进当天总结；`--saved` 跳过 AI 判断直接写入收藏集合（kind=manual）并生成笔记。
+- 笔记落 `信息源/<站点域名>/`，frontmatter `收藏理由` 字段可随时补写「为什么收藏它」。
+- 收藏集合 = `自动获取信息/收藏集合/收藏.md`（**四列：收藏时间 | 来源 | 文章 | 收藏理由**）+ `_收藏索引.json`，跨日汇总所有勾选；`收藏时间` = 首次观察到勾选的扫描日 **-1 天**（粘住不回跳）。取消勾选会从集合删除。
+- 收藏时间口径已拍板：扫描日-1 是唯一方案（勾选时刻对每日批处理不可观测；仅「扫描当天 08:40 前勾选」会早 1 天，属已接受的罕见误差）。
+
+### user_interests.json 配置键
+
+| 键 | 作用 | 生效点 |
+| --- | --- | --- |
+| `topics` | 动态搜索主题，经 `--topics` 传入（bilibili 关键词同源） | `push_to_obsidian.py` |
+| `reject` | 主题拒绝词，注入 AI 准入与最终推荐 prompt | `llm_summarize.py` |
+| `daily_sources` | 定时任务默认来源（`--source`），当前 `juejin,devto,github,openai,bilibili` | `run_daily.ps1` → `--source` |
+| `limit_per_topic` | 动态搜索每主题条数（当前 5），经 `--dynamic-limit` 注入；CLI 显式传参优先 | `run_daily.ps1` → `--dynamic-limit` → `fetch_dynamic_search_news(limit_per_topic=)` |
+| `search_query_optimization` | 搜索词 LLM 消歧开关（默认 false，见上） | `push_to_obsidian.py` |
+| `block_url_patterns` | L0 零成本硬挡：匹配 URL **path** 的动态项（如 `/docs/`、`/tutorials/`），不进 LLM | `apply_zero_cost_rules` |
+| `block_hosts` | L0 零成本硬挡：匹配 hostname（精确或 `.host` 子域）的动态项（当前 8 条域名黑名单） | `apply_zero_cost_rules` |
+
+> 过滤只作用于动态搜索项，RSS 固定源全部保留；`block_hosts` 语义：`en.wikipedia.org` 挡本域及子域（`blog.en.wikipedia.org`），但 `en.m.wikipedia.org` 是 `m.wikipedia.org` 子域、与 `en` 平级不命中——要挡整站需加根域（如 `wikipedia.org`）。
 
 The output is `<Vault>/自动获取信息/YYYY-MM-DD/`: article notes are stored in `信息源/<来源中文名>/`, and `今日总结.md` at the date root is regenerated from every article already stored for that day. AI 拒绝结果写入同级的 `拒绝集合/`：每日页面展示全部拒绝与待复核项，`_拒绝索引.json` 供程序执行确定性拒绝的历史去重。
 

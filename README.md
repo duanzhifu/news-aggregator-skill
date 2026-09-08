@@ -16,8 +16,9 @@
 - **🌍 全网多源聚合**：一站式覆盖跨越硅谷科技、中国创投、开源社区、金融市场、国际新闻以及顶级 AI 播客/硬核推文的 **53 个高价值信源**。
 - **🔧 OPML 自定义订阅**：内置 53 源覆盖不全时，在 `user_sources.opml` 里新增一条带 `xmlUrl` 的 RSS/Atom 订阅项即可接入，兼容 Feedly / Inoreader 等 RSS 阅读器导出格式。未内置的媒体、机构博客和个人订阅源（如 NYT 中文）都可走这条路，详见 `user_sources.opml.example`。
 - **🚀 完美支持 OpenClaw**：专为原生大模型 Agent 平台（如 OpenClaw、Code Agent）深度定制，即插即用，沉浸式体验信息流。
-- **🔑 轻量配置 (Config-Lite)**：只需在 `.env` 填一个 LLM API Key（支持商汤/中转双 provider 注释切换）与可选 Groq Key（视频转写），即插即用。
+- **🔑 轻量配置 (Config-Lite)**：只需在 `.env` 填一个 LLM API Key（支持商汤/中转双 provider 注释切换）、可选 Groq Key（视频转写）与可选 AnySearch Key（动态搜索，默认引擎，不填走匿名低限额 + Bing 兜底），即插即用。
 - **🧠 AI 全文审阅**：AI 先依据来源列表、原始时间和摘要决定值得打开的文章，再抓取完整 DOM 正文并逐段审阅，覆盖全文后完成翻译、总结与质量确认。
+- **👤 用户画像个性化**：每日从主库提炼「我是谁 / 我在做什么 / 我现在需要什么」画像，注入 AI 候选准入与最终推荐，推荐更贴合你的兴趣；材料不变时走缓存零 LLM 开销。
 - **📰 场景化早报 (Daily Briefings)**：内置多套场景预设（综合早报、财经早报、科技早报、吃瓜早报、AI深度日报），一键生成杂志级排版的 Markdown 中文报告。
 - **🪄 魔法交互菜单**：支持通过专属口令唤醒全局交互式菜单，告别繁琐长难句，只需输入序号即可指哪打哪。
 
@@ -123,6 +124,8 @@ playwright install chromium
 - **硬核科研**："看看今天 HuggingFace 有什么新发的神仙论文？"
 - **国际新闻**："抓取 BBC、Reuters 和 Al Jazeera 的今日国际新闻。"
 - **自定义订阅**：拷一份 `user_sources.opml.example` 到 `user_sources.opml`（或 `~/.config/news-aggregator/user_sources.opml`），加自己想看的 RSS，运行 `python scripts/fetch_news.py --source user --limit 15`
+- **手动收藏**：想直接收藏某篇文章，运行 `python scripts/push_to_obsidian.py --vault <Vault> --add-url <URL> [--note 理由] [--saved]`——`--saved` 跳过 AI 判断直接进收藏集合（`收藏集合/收藏.md`，四列含收藏理由）
+- **视频转文章**：把单个视频整理成结构化中文文章，运行 `python scripts/video_to_article.py <视频URL|本地文件|文件夹> [--out 输出根] [--topic 专题名]`——AI 总结/截图/思维导图/完整文稿四件套，详见 `DEPLOYMENT_GUIDE.md`
 
 ---
 
@@ -130,7 +133,7 @@ playwright install chromium
 
 ### 社交平台技术内容
 
-支持 `douyin`、`bilibili`。bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `run_daily.ps1` 注入），仅在无 topics 时兜底读取 `config/social_sources.json`；也可通过 `--keyword` 临时指定：
+支持 `douyin`、`bilibili`。bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承），仅在无 topics 时兜底读取 `config/social_sources.json`；也可通过 `--keyword` 临时指定：
 
 ```bash
 python scripts/fetch_news.py --source douyin,bilibili --keyword "前端,AI,软件工程" --limit 5
@@ -145,7 +148,13 @@ python scripts/fetch_news.py --source douyin,bilibili --keyword "前端,AI,软�
 
 B 站已纳入常规 Obsidian 日报的默认来源，抖音需通过显式 `--source douyin` 抓取；社交来源同样使用每源 15 条上限。
 
-Obsidian 日报默认使用 `--evidence-mode snapshot`。不同平台的发布时间、更新时间、仓库推送时间和榜单时间由 AI 结合原始字段解释，并在笔记中保存时间类型、置信度与证据；程序不再用统一小时规则提前删除这些候选。
+### 🔍 动态搜索（AnySearch 主引擎 + Bing 兜底）
+
+每日按 `user_interests.json` 的 `topics` 做全网动态搜索时，默认引擎为 **AnySearch**（`fetch_dynamic_search.py`，zone=cn、语言 zh-CN）。在 `.env` 配置 `ANYSEARCH_API_KEY`（`as_sk_` 前缀）后使用独立额度；未配置时以匿名低限额运行。
+
+当某主题的全部动态结果都被 AI 评估为不推荐（死主题）时，管线自动用 **Bing 登录态**（`cn.bing.com` + `setmkt=zh-CN`，profile `D:\news-aggregator-browser-profile`）兜底重搜，无需人工干预。日志特征：AnySearch 检索打 `[AnySearch] 正在检索关键词`，失败打 `[AnySearch Error]`；Bing 兜底触发时打 `[DynamicSearch]` 主题重搜。英文多义词 topic 返回错误义项时，可开启 `user_interests.json` 的 `search_query_optimization`（默认关）让 LLM 先消歧再搜。
+
+Obsidian 日报默认使用 `--evidence-mode snapshot`。
 
 欢迎提交 PR 为框架接入新的全球优质信源。我们期望共建一个**最纯净、最高效、抗干扰**的防降智信息获取舱。
 
