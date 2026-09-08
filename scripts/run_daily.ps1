@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$skillRoot = 'C:\Users\86139\.claude\skills\news-aggregator-skill'
+$skillRoot = 'D:\Obsidian\自动信息获取\_skill\news-aggregator-skill'
 $pythonPath = 'C:\Users\86139\AppData\Local\Programs\Python\Python312\python.exe'
 $pushScript = Join-Path $skillRoot 'scripts\push_to_obsidian.py'
 $vaultFolder = [string]::Concat([char[]](0x81EA, 0x52A8, 0x4FE1, 0x606F, 0x83B7, 0x53D6))
