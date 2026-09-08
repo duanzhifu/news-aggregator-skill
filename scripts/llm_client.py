@@ -206,16 +206,17 @@ def _http_post_json(path, payload):
 
 def _parse_response_text(res):
     """从通用响应里尽量抽出文本：兼容 Responses API 与 Chat Completions 两种结构。"""
-    # Chat Completions: choices[0].message.content / reasoning_content
+    # Chat Completions: choices[0].message.content
     choices = res.get('choices')
     if isinstance(choices, list) and choices:
         msg = choices[0].get('message', {})
         if msg.get('content'):
             return msg['content'].strip()
-        if msg.get('reasoning_content'):
-            return msg['reasoning_content'].strip()
-        if msg.get('reasoning'):
-            return msg['reasoning'].strip()
+        # content 为空：reasoning 模型的推理字段（reasoning_content/reasoning）是思考过程、
+        # 不是答案，直接返回会让推理文本冒充结果（2026-09-08 画像 6029 字推理文本根因，
+        # 与 /responses 的 reasoning-only 假成功同源，见 pitfall 55）。视为调用失败抛异常，
+        # 由上层兜底（画像→空串按 topics 判断；评估→evaluation_failed 待复核）。
+        raise RuntimeError("Chat Completions 响应无答案文本（message.content 为空，仅有推理过程或已被截断）")
     # Responses API: output[].content[].output_text
     if res.get('output'):
         for output in res['output']:
@@ -246,8 +247,9 @@ def _call_responses_api(messages, model, temperature, max_tokens, json_mode):
         "model": model,
         "input": input_messages,
         "temperature": temperature,
-        "max_output_tokens": max_tokens,
     }
+    if max_tokens is not None:
+        payload["max_output_tokens"] = max_tokens
     if json_mode:
         payload["text"] = {"format": {"type": "json_object"}}
     res = _http_post_json("/responses", payload)
@@ -262,8 +264,9 @@ def _call_chat_completions_api(messages, model, temperature, max_tokens, json_mo
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     res = _http_post_json("/chat/completions", payload)

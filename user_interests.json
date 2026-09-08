@@ -21,6 +21,7 @@
     "bilibili"
   ],
   "limit_per_topic": 5,
+  "search_query_optimization": false,
   "block_url_patterns": [
     "/docs/",
     "/tutorials/",

@@ -1,5 +1,9 @@
 import json
+import shutil
+import tempfile
 import unittest
+from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts import llm_summarize
@@ -172,6 +176,67 @@ class AiFetchPipelineTests(unittest.TestCase):
             result = llm_summarize._process_full_text_item(item)
         self.assertEqual(2, result["evidence_chunk_count"])
         self.assertEqual("optional", result["recommendation_level"])
+
+
+class UserProfileCacheTests(unittest.TestCase):
+    """get_user_profile 缓存机制（2026-09-08 用户拍板）：
+    材料哈希相同 → 延用缓存画像不重新提炼；材料变化 → 重新提炼 + 更新缓存。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.patchers = [
+            patch.object(llm_summarize, "PROFILE_CACHE_PATH",
+                         Path(self.tmp) / "user_profile_cache.json"),
+            patch.object(llm_summarize, "REPORTS_DIR", Path(self.tmp)),
+            patch.object(llm_summarize, "load_user_profile_materials",
+                         return_value="个人档案+能力地图+项目进度固定材料"),
+        ]
+        for p in self.patchers:
+            p.start()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def tearDown(self):
+        for p in self.patchers:
+            p.stop()
+
+    def test_materials_unchanged_reuses_cached_profile_without_distill(self):
+        with patch.object(llm_summarize, "distill_user_profile", return_value="画像A") as distill:
+            first = llm_summarize.get_user_profile(snapshot=False)
+            second = llm_summarize.get_user_profile(snapshot=False)
+        self.assertEqual("画像A", first)
+        self.assertEqual("画像A", second)
+        # 第二次材料无变化：延用缓存，不应再调 distill（省 LLM token）
+        distill.assert_called_once()
+
+    def test_materials_changed_triggers_redistill_and_cache_update(self):
+        profiles = iter(["画像A", "画像B"])
+        with patch.object(llm_summarize, "distill_user_profile",
+                          side_effect=lambda m: next(profiles)):
+            first = llm_summarize.get_user_profile(snapshot=False)
+            # 用户材料变化（档案/能力地图/项目进度更新）
+            llm_summarize.load_user_profile_materials.return_value = "材料变化了"
+            second = llm_summarize.get_user_profile(snapshot=False)
+        self.assertEqual("画像A", first)
+        self.assertEqual("画像B", second)
+
+    def test_empty_distill_not_cached(self):
+        with patch.object(llm_summarize, "distill_user_profile", return_value=""):
+            profile = llm_summarize.get_user_profile(snapshot=False)
+        self.assertEqual("", profile)
+        self.assertFalse(llm_summarize.PROFILE_CACHE_PATH.exists())
+
+    def test_snapshot_written_only_after_redistill(self):
+        with patch.object(llm_summarize, "distill_user_profile", return_value="画像A"):
+            llm_summarize.get_user_profile(snapshot=True)
+        snap = llm_summarize.REPORTS_DIR / datetime.now().strftime('%Y-%m-%d') / "user_profile.md"
+        self.assertTrue(snap.exists())
+        before = snap.read_text(encoding="utf-8")
+        # 材料无变化延用：不重新提炼、不重写当日快照
+        with patch.object(llm_summarize, "distill_user_profile") as distill:
+            llm_summarize.get_user_profile(snapshot=True)
+        distill.assert_not_called()
+        self.assertEqual(before, snap.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

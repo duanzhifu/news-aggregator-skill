@@ -1864,6 +1864,7 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
     if cfg.get('daily_sources'):
         source_keys = cfg['daily_sources']
     dynamic_limit = dynamic_limit or cfg.get('limit_per_topic', 3)
+    optimize_dynamic = bool(cfg.get('search_query_optimization'))
     reject = cfg.get('reject') or []
     block_patterns = cfg.get('block_url_patterns') or []
     topics = topics or cfg.get('topics') or None
@@ -1911,7 +1912,7 @@ def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tec
                 from fetch_dynamic_search import fetch_dynamic_search_news
             except ModuleNotFoundError:
                 from scripts.fetch_dynamic_search import fetch_dynamic_search_news
-            dynamic_items = fetch_dynamic_search_news(topics, limit_per_topic=dynamic_limit)
+            dynamic_items = fetch_dynamic_search_news(topics, limit_per_topic=dynamic_limit, optimize=optimize_dynamic)
             if dynamic_items:
                 news_items.extend(dynamic_items)
                 print(f"\n[DynamicSearch] 动态搜索成功，共扩充 {len(dynamic_items)} 篇：")

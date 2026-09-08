@@ -1553,7 +1553,7 @@ def main():
     AI_TIME_INTERPRETATION_MODE = args.skip_time_filter
 
     if args.list_sources:
-        print(f"{'Source Key':<20} | {'Source Name'}")
+        print(f"{'Source Key':<20}")
         print("-" * 40)
         for key in sorted(sources_map.keys()):
             print(f"{key:<20}")

@@ -1,4 +1,5 @@
 """Use an LLM to translate news metadata and generate daily summaries."""
+import hashlib
 import json
 import os
 import re
@@ -248,6 +249,8 @@ USER_PROFILE_FILES = [
     '知识库/个人系统/能力地图.md',
 ]
 USER_PROFILE_PROGRESS_GLOB = '知识库/个人系统/项目/*/项目进度/*.md'
+REPORTS_DIR = Path(__file__).resolve().parent.parent / 'reports'
+PROFILE_CACHE_PATH = REPORTS_DIR / 'user_profile_cache.json'
 
 
 def load_user_profile_materials(max_progress_entries=3, kb_root=USER_PROFILE_KB_ROOT):
@@ -284,7 +287,8 @@ def build_user_profile_prompt(materials):
 只提取与「判断技术内容是否适合该用户」相关的信号，不要照抄档案表格或能力清单原文：
 - 【我是谁】：阶段、长期目标、已具备/正在用的技术、能力边界。
 - 【我现在做/学什么】：当前核心项目、正在做的事。注意：能力地图里「待验证」项表示该技能还没验证，恰恰是接下来要攻的方向；项目进度是最近讨论/落地的主题。
-- 【我现在需要什么内容】：明确三类都要——（1）概念扫盲/名词解释（如什么是LLM、什么是SDD），（2）与我现在项目强相关的（如 Obsidian 知识库、Claude Code、agent 人格优化），（3）前沿动态。
+- 【我现在需要什么内容】：明确三类都要——（1）概念扫盲/名词解释，（2）与我现在项目强相关的（如 Obsidian 知识库、Claude Code、agent 人格优化），（3）前沿动态。
+  概念扫盲的判断依据 = 材料里我是否已有基础（2026-09-08 用户拍板）：材料未覆盖/我完全没听过的概念 → 需要入门扫盲（哪怕与当前项目不直接相关，先知道它是什么、解决什么问题）；材料里已有基础的技术（如 HTML/CSS/JS/React）→ 不需要入门，只要深度、实战、踩坑类内容；材料里标「待验证」的 → 需要具体实操与落地内容，不是入门也不是纯概念。
 
 这份画像将用于：判断候选标题值不值得打开、最终决定是否推荐阅读。因此请写出能让判断更贴合他需求的信号，不要泛泛而谈。
 
@@ -301,26 +305,62 @@ def distill_user_profile(materials):
     raw = call_llm(
         [{"role": "system", "content": "你是一位严谨的用户画像提炼助手。"},
          {"role": "user", "content": build_user_profile_prompt(materials)}],
-        temperature=0.2, max_tokens=3000, json_mode=False,
+        temperature=0.2, max_tokens=None, json_mode=False,
     )
     return (raw or "").strip()
 
 
-def get_user_profile(max_progress_entries=3, snapshot=True):
-    """读材料 → 提炼 → 写当日快照（reports/<日期>/user_profile.md）→ print 到日志 → 返回画像文本。
+def _load_profile_cache():
+    """读画像缓存（材料哈希 + 画像文本 + 提炼日期）；不存在/损坏返回 None。"""
+    try:
+        if PROFILE_CACHE_PATH.exists():
+            return json.loads(PROFILE_CACHE_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    return None
 
-    一次 run 调一次，结果由下游各判断层复用；失败返回空串兜底，不影响本轮按 topics 判断。
+
+def _save_profile_cache(materials_hash, profile):
+    """写画像缓存。失败只打 stderr，不中断主流程。"""
+    try:
+        PROFILE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PROFILE_CACHE_PATH.write_text(
+            json.dumps({
+                "materials_hash": materials_hash,
+                "profile": profile,
+                "date": datetime.now().strftime('%Y-%m-%d'),
+            }, ensure_ascii=False, indent=2),
+            encoding='utf-8')
+    except Exception as e:
+        print(f"[画像] 写画像缓存失败：{e}", file=sys.stderr)
+
+
+def get_user_profile(max_progress_entries=3, snapshot=True):
+    """读材料 → 提炼画像 → 返回画像文本（一次 run 调一次，结果由下游各判断层复用）。
+
+    缓存机制（2026-09-08 用户拍板）：对读到的材料算 sha256，
+    - 与缓存哈希相同 = 用户信息没变 → 延用缓存画像，不重新提炼、不写当日快照（省 LLM token）；
+    - 材料有变化（个人档案/能力地图/项目进度更新）→ 重新提炼 + 更新缓存 + 写当日快照。
+    失败返回空串兜底，不影响本轮按 topics 判断。
     """
     profile = ""
     try:
         materials = load_user_profile_materials(max_progress_entries)
-        profile = distill_user_profile(materials)
+        current_hash = hashlib.sha256(materials.encode('utf-8')).hexdigest()
+        cache = _load_profile_cache()
+        if cache and cache.get('materials_hash') == current_hash and cache.get('profile'):
+            profile = cache['profile']
+            print(f"[画像] 用户材料无变化，延用 {cache.get('date', '?')} 提炼的画像（{len(profile)}字），本轮不重新提炼")
+        else:
+            profile = distill_user_profile(materials)
+            if profile:
+                _save_profile_cache(current_hash, profile)
     except Exception as e:
         print(f"[画像] 提炼用户画像失败，本轮仅按 topics 判断：{e}", file=sys.stderr)
     profile = profile or ""
     if snapshot and profile:
         try:
-            snap_dir = Path(__file__).resolve().parent.parent / 'reports' / datetime.now().strftime('%Y-%m-%d')
+            snap_dir = REPORTS_DIR / datetime.now().strftime('%Y-%m-%d')
             snap_dir.mkdir(parents=True, exist_ok=True)
             (snap_dir / 'user_profile.md').write_text(profile, encoding='utf-8')
             print(f"[画像] 已写当日画像快照：{snap_dir / 'user_profile.md'}")
