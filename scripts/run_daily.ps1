@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $skillRoot = 'D:\Obsidian\自动信息获取\_skill\news-aggregator-skill'
 $pythonPath = 'C:\Users\86139\AppData\Local\Programs\Python\Python312\python.exe'
