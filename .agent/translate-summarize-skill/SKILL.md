@@ -3,6 +3,10 @@ name: translate-summarize-skill
 description: "翻译与总结 Skill。将 news-aggregator-skill 抓取的原始 JSON 数据翻译为中文，并生成文章级、源级、批次级三层总结。用于无人值守定时任务或手动管道流。当用户请求「翻译总结」、「生成中文报告」或相关工作流触发时使用。"
 ---
 
+> **定位说明**：本文件是「翻译与总结管道」的行为说明文档（供阅读仓库时理解语义），
+> **无独立运行时入口**——实际实现由 `scripts/llm_summarize.py`（prompt/批处理/重试）
+> 与 `scripts/push_to_obsidian.py`（写库）承担；不会被技能发现机制单独加载。
+
 # Translate & Summarize Skill
 
 将 AI 入选文章的来源元数据与完整 DOM 正文的分段证据转换为中文标题、摘要、时间判断和质量结论，输出供本地 Obsidian 发布流程读取的结构化 JSON。
