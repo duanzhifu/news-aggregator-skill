@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """video_to_article.py 去重层单测：URL 规范化 / simhash / 语义命中 / 索引读写 / 精确指纹键。"""
-import json
 import os
 import tempfile
 import unittest

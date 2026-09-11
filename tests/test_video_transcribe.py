@@ -3,7 +3,6 @@
 覆盖：视频站识别、bvid 提取、bilibili 字幕全链、无登录/无字幕/网络失败降级、
 youtube 暂退化、逐条 content 拼接。用 mock 切断真实网络/浏览器。
 """
-import json
 import time
 import unittest
 from unittest import mock
@@ -126,5 +125,4 @@ class TestFetchBilibiliCookie(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    import time
     unittest.main()
