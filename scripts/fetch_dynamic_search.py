@@ -181,10 +181,3 @@ def fetch_dynamic_search_news(topics: list, limit_per_topic: int = 3, engine: st
                 print(f"[DynamicSearch Error] 主题 '{term}' 检索失败: {e}", file=sys.stderr)
 
     return all_items
-
-
-if __name__ == "__main__":
-    test_topics = ["大模型", "SDD"]
-    engine = sys.argv[1] if len(sys.argv) > 1 else "anysearch"
-    items = fetch_dynamic_search_news(test_topics, limit_per_topic=2, engine=engine)
-    print(json.dumps(items, ensure_ascii=False, indent=2))

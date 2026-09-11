@@ -259,6 +259,9 @@ def load_user_profile_materials(max_progress_entries=3, kb_root=USER_PROFILE_KB_
     项目进度按 mtime 取最新 N 篇、自动跨项目；呼应「每 5 篇就沉淀」，取 3 篇不漏且省。
     """
     root = Path(kb_root)
+    if not root.is_dir():
+        print(f"[画像] 主库材料目录不存在: {kb_root}。已回退为按 topics 判断（不写死身份）。", file=sys.stderr)
+        return ""
     sections = []
     for rel in USER_PROFILE_FILES:
         p = root / rel
@@ -277,6 +280,10 @@ def load_user_profile_materials(max_progress_entries=3, kb_root=USER_PROFILE_KB_
     for p in progress:
         rel = p.relative_to(root).as_posix()
         sections.append(f"# 来源：{rel}\n\n{p.read_text(encoding='utf-8', errors='replace')}")
+    if not sections:
+        print(f"[画像] 主库 {kb_root} 下未读到任何画像材料（文件: {USER_PROFILE_FILES}, glob: {USER_PROFILE_PROGRESS_GLOB}）。"
+              f"已回退为按 topics 判断（不写死身份）。", file=sys.stderr)
+        return ""
     return "\n\n".join(sections)
 
 
@@ -410,7 +417,7 @@ def build_candidate_selection_prompt(items, topics=None, recency_days=7, now_iso
 3. 广告、推广、标题党、重复转载、与主题无关或证据明显不足的社交内容应拒绝。
 4. 时间缺失不能单独成为拒绝理由；当前热榜可保留并标记 ranking_observed 或 unknown。
 5. 不得猜测没有证据的日期。无法可靠归一化时 published_at 返回空字符串。
-6. 看清用户画像：他是系统学习者（要概念扫盲/名词解释）、正在搭智能知识库、用 AI 做 agent 优化等；判断候选是否与他当前项目、学习需求或前沿方向相关时，要结合画像理解其真实意图，而不是只按字面关键词命中与否来判。
+6. 看清上方「用户画像」：识别画像中此人当前的阶段、项目与内容需求（概念扫盲/项目强相关/前沿动态），判断候选是否值得打开要结合画像理解其真实意图，而不是只按字面关键词命中与否来判；若画像为空则按主题相关度判断，不臆测固定身份。
 
 只输出严格合法 JSON：
 {{"items":[{{"selected":true,"title_zh":"中文标题","selection_reason":"具体理由","rejection_kind":"not_applicable","evidence_points":["标题与用户关注主题直接相关","摘要包含可验证的技术细节"],"published_at":"2026-08-04T09:30:00+08:00","time_kind":"published","time_confidence":"high","time_evidence":"原始字段或页面列表中的证据"}}]}}
@@ -624,7 +631,7 @@ def build_snapshot_processing_prompt(items, topics=None, recency_days=7, minimal
 用户画像（此人背景，判断是否推荐阅读时请结合，别只按字面关键词匹配）：
 {profile_text}
 每一段都已处理；只能使用下方元数据和分段结论中的证据，不得补充没有的实现、实验、因果关系或结论。一次性返回自然中文标题、2 至 3 句中文总结、质量判断及时间确认。明显广告、低价值转载、标题党或全文与标题不符时可在最终阶段拒绝。
-判断推荐等级时请结合用户画像：他是系统学习者（要概念扫盲/名词解释）、正在搭智能知识库、用 AI 做 agent 优化等；若内容与他当前项目、学习需求或前沿方向相关，即使标题不含关键词也应考虑推荐；若只是表面沾边 AI 但实际低价值/无信息量，仍应降级。
+判断推荐等级时请结合上方「用户画像」：若内容与他当前项目、学习阶段或前沿方向相关，即使标题不含关键词也应考虑推荐；若只是表面沾边 AI 但实际低价值/无信息量，仍应降级。画像为空时按主题相关度判断，不臆测固定身份。
 质量分档锚点（quality_score 必须先归到下列四档，再在档内给出具体分数；分数与推荐等级必须一致，不得出现「高分低档」或「低分高档」的矛盾）：
 【高价值干货 80-100】原创、有深度、有可复用信息（可复用代码/命令/配置、具体数据或对比实验、第一手经验或独到见解、原创非转载）。→ recommendation_level=strongly_recommended。
 【有用参考 60-79】内容相关、信息真实、有价值，但偏介绍/综述/转述，深度或原创性一般。→ recommendation_level=optional。

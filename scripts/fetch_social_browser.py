@@ -11,6 +11,10 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
+# 默认浏览器登录态目录（与 setup_social_login.py / fetch_bing_search.py 一致：
+# 未执行登录时目录不存在 → isdir 检查落回临时会话，零配置安全）
+DEFAULT_PROFILE = r"D:\news-aggregator-browser-profile"
+
 
 TIME_PATTERN = re.compile(
     r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?"
@@ -33,9 +37,7 @@ STATS_ONLY_TITLE = re.compile(
 def configured_profile(environ=None):
     environ = os.environ if environ is None else environ
     value = environ.get("NEWS_AGGREGATOR_BROWSER_PROFILE", "").strip()
-    if not value:
-        return None
-    profile = os.path.abspath(os.path.expanduser(value))
+    profile = os.path.abspath(os.path.expanduser(value or DEFAULT_PROFILE))
     if not os.path.isdir(profile):
         print(
             f"Browser profile does not exist; using a temporary session: {profile}",
