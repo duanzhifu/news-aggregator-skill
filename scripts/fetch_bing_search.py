@@ -21,7 +21,7 @@ DEFAULT_PROFILE = r"D:\news-aggregator-browser-profile"
 def _configured_profile():
     """Return the persistent profile dir if it exists, else None.
 
-    Prefers the NEWS_AGGREGATOR_BROWSER_PROFILE env var (set by run_daily.ps1),
+    Prefers the NEWS_AGGREGATOR_BROWSER_PROFILE env var (set by run_daily.py),
     falling back to the default login-profile path. Reusing the logged-in
     profile is what makes Bing treat the request as a trusted user instead of
     an anonymous bot (which is the root cause of 中文短语拆词垃圾).
@@ -128,9 +128,3 @@ def fetch_search_results_bing(keyword: str, limit: int = 5) -> list:
                 browser.close()
 
     return results
-
-
-if __name__ == "__main__":
-    test_keyword = sys.argv[1] if len(sys.argv) > 1 else "Agent"
-    res = fetch_search_results_bing(test_keyword, limit=3)
-    print(json.dumps(res, ensure_ascii=False, indent=2))

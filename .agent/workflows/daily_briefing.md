@@ -2,13 +2,16 @@
 description: Generate and publish an Obsidian daily briefing
 ---
 
-1. Run the current AI-selection and snapshot publishing pipeline for the requested sources:
-   // turbo
+1. Run the daily pipeline via the cross-platform entrypoint (auto-resolves Vault, browser profile and sources from skill-root config; refuses to write to the main vault):
    ```powershell
-   & "C:\Users\86139\AppData\Local\Programs\Python\Python312\python.exe" scripts\push_to_obsidian.py --source {{source_keys}} --limit {{limit}} --evidence-mode snapshot --vault "{{vault_path}}" --profile {{profile}}
+   python scripts/run_daily.py
+   ```
+   For a one-off custom run (custom sources / limits / vault), call the pipeline directly instead:
+   ```powershell
+   python scripts/push_to_obsidian.py --source {{source_keys}} --limit {{limit}} --evidence-mode snapshot --vault "{{vault_path}}"
    ```
 
-2. Read the generated notes in `{{vault_path}}/自动获取信息/YYYY-MM-DD/`.
+2. Read the generated notes in `<Vault>/自动获取信息/YYYY-MM-DD/`.
 
 3. Confirm that `今日总结.md` was regenerated from every article note stored for that date.
 
