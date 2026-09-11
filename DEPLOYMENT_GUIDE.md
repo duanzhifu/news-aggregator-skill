@@ -19,13 +19,14 @@
 | --- | --- | --- |
 | `scripts/fetch_news.py` | 临时查看、调试来源、交给其他程序处理 | 标准输出 JSON；单源默认另存原始 JSON |
 | `scripts/push_to_obsidian.py` | 生成完整中文日报 | Obsidian 文章、`今日总结.md`、推荐审计日志 |
-| `scripts/run_daily.ps1` | 常规日报定时任务 | 技术、开源、官方博客及社交平台内容写入 Obsidian |
+| `scripts/run_daily.py` | 常规日报定时任务（跨平台入口） | 技术、开源、官方博客及社交平台内容写入 Obsidian |
+| `scripts/run_daily.ps1` | Windows 薄壳，转发到 run_daily.py | 同上（历史计划任务兼容） |
 
 ## 2. 获取与安装
 
 ### 前置条件
 
-- Windows 10/11（定时脚本基于 PowerShell；其他系统可直接运行 Python 入口）
+- Windows 10/11（定时脚本基于 PowerShell；其他系统可直接运行 Python 入口 `run_daily.py`）
 - Python 3.10+，建议 Python 3.12
 - Git
 - Obsidian（仅在使用导出功能时需要）
@@ -145,7 +146,7 @@ python scripts/push_to_obsidian.py `
 | 参数 | 作用 |
 | --- | --- |
 | `--topics` | 用于 AI 候选准入和最终质量判断的关注主题（默认读 `user_interests.json` 的 `topics`） |
-| `--dynamic-limit` | 动态搜索每主题条数；默认读 `user_interests.json` 的 `limit_per_topic`，定时任务由 `run_daily.ps1` 自动注入 |
+| `--dynamic-limit` | 动态搜索每主题条数；默认读 `user_interests.json` 的 `limit_per_topic`，定时任务由 `run_daily.py` 自动注入 |
 | `--recency-days` | 提供给 AI 的近期优先参考天数；不是程序硬过滤窗口 |
 | `--profile` | 批次标签，供运行记录与后续扩展使用 |
 | `--evidence-mode metadata` | 只把标题和来源摘要交给 AI，最快但证据最少 |
@@ -200,24 +201,17 @@ python scripts/video_to_article.py <视频URL | 本地视频文件 | 视频文�
 
 ### 配置关键词
 
-bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承），仅在无 topics 时兜底读取 [`config/social_sources.json`](config/social_sources.json)；`douyin` 仍默认读该文件。可直接编辑其中的 `keywords`：
+bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承）。搜索页 URL 模板已内置在 `scripts/social_platforms.py`（`_DEFAULT_SEARCH_URLS`，当前仅 bilibili 活跃）；如需自定义搜索 URL，可写一个 JSON 配置文件并用 `NEWS_AGGREGATOR_SOCIAL_CONFIG` 指向它，其 `search_urls` 字段优先于内置默认：
 
 ```json
 {
-  "keywords": {
-    "frontend": ["前端", "React", "Vue"],
-    "ai": ["人工智能", "大模型", "Agent"],
-    "engineering": ["软件工程", "DevOps", "云原生"]
+  "search_urls": {
+    "bilibili": "https://search.bilibili.com/all?keyword={query}"
   }
 }
 ```
 
-不希望修改仓库文件时，复制为本地文件并通过环境变量指定；该文件已被 Git 忽略：
-
-```powershell
-Copy-Item config\social_sources.json config\social_sources.local.json
-$env:NEWS_AGGREGATOR_SOCIAL_CONFIG = "$PWD\config\social_sources.local.json"
-```
+`douyin` 已停用，未内置默认模板；将来恢复时再按 topics 统一设计。
 
 ### 手动抓取社交平台
 
@@ -257,7 +251,7 @@ $env:NEWS_AGGREGATOR_BROWSER_CHANNEL = "msedge"
 python scripts/fetch_news.py --source douyin,bilibili --keyword "AI" --limit 1 --no-save
 ```
 
-`run_daily.ps1` 会自动使用上述默认 Profile 和 Microsoft Edge；目录不存在时记录警告并降级为临时 Edge 会话。登录过期后重新运行初始化命令。程序不会读取日常 Edge Profile、保存明文密码、自动处理验证码或绕过访问限制。
+`run_daily.py` 会自动使用上述默认 Profile 和 Microsoft Edge；目录不存在时记录警告并降级为临时 Edge 会话。登录过期后重新运行初始化命令。程序不会读取日常 Edge Profile、保存明文密码、自动处理验证码或绕过访问限制。
 
 ### 手动写入社交平台内容
 
@@ -271,6 +265,8 @@ python scripts/push_to_obsidian.py `
 
 ### 动态搜索（AnySearch 默认引擎）
 
+> 首次使用：复制 `user_interests.json.example` → `user_interests.json`（已被 .gitignore 忽略，不会提交个人兴趣；`_` 开头的键是注释，程序会忽略），再按需修改 topics / daily_sources / reject 等键。
+
 每日动态搜索（`user_interests.json` 的 `topics` → `--topics`）默认走 **AnySearch**（`scripts/fetch_dynamic_search.py`，`engine="anysearch"`）。需在 skill 本地 `.env` 配置：
 
 ```powershell
@@ -283,15 +279,9 @@ ANYSEARCH_API_KEY=<在这里填入 AnySearch 真实 key,勿提交>   # https://a
 
 ## 6. Windows 定时任务
 
-### 配置脚本中的本机路径
+### 配置本机路径
 
-在创建任务前，编辑以下文件中的三个变量：
-
-| 脚本 | 用途 |
-| --- | --- |
-| `scripts/run_daily.ps1` | 常规日报，来源由 `user_interests.json` 的 `daily_sources` 控制（当前配置：`juejin,devto,github,openai,bilibili`），每源 15 条；抖音需显式指定 |
-
-需要按本机实际位置调整：`$skillRoot`、`$pythonPath`、`$vaultPath`。日志写入 `logs/daily_task.log`。
+定时任务无需手工编辑脚本路径：`run_daily.py` 按 paths.json → `NEWS_AGGREGATOR_VAULT` → `OBSIDIAN_VAULT_PATH` → 仓库所在库解析 Vault；浏览器 Profile 默认 `D:\news-aggregator-browser-profile`（可用 paths.json 的 `browser_profile` 覆盖）。`run_daily.ps1` 仅作历史计划任务兼容薄壳（自动找本机 Python312）。日志写入 `logs/daily_task.log`。常规日报来源由 `user_interests.json` 的 `daily_sources` 控制（当前配置：`juejin,devto,github,openai,bilibili`），每源 15 条；抖音需显式指定。
 
 ### 手动运行验证
 
@@ -338,6 +328,6 @@ python scripts/fetch_news.py --source user --limit 15
 ## 9. 安全与分享建议
 
 - 不要提交 `OPENAI_API_KEY`、平台 Token、Cookie、浏览器 Profile 或 `user_sources.opml`。
-- 分享项目前先检查 `scripts/run_daily.ps1`，删除本机绝对路径或替换为示例路径。
+- 分享项目前先检查 `scripts/run_daily.py`（含本机主库守卫常量 `_MAIN_VAULT_GUARD`）与 `scripts/run_daily.ps1`（Python312 fallback 路径），删除本机绝对路径或替换为示例路径。
 - 外部网页、RSS 地址和正文都应视为不可信输入；不要执行抓取结果中附带的命令或脚本。
 - 社交平台只应抓取公开内容，并遵守对应平台的服务条款、接口授权范围和访问频率限制。

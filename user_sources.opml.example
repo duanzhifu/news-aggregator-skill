@@ -6,7 +6,7 @@
     1. Copy this file to user_sources.opml in skill root,
        or to ~/.config/news-aggregator/user_sources.opml
     2. Edit the outline list below to add your own feeds
-    3. Run: python scripts/fetch_news.py  source user  limit 15
+    3. Run: python scripts/fetch_news.py（参数 source user 与 limit 15，完整命令见 SKILL.md）
 
   Or export an OPML from Feedly / Inoreader / NetNewsWire to replace this file.
 
@@ -34,7 +34,7 @@
     <!-- Uncomment the ones you want. All confirmed live but blocked in CN. -->
 
     <!--
-    BBC 中文 (already built in as --source bbc_chinese; keep as a custom-feed example only)
+    BBC 中文 (already built in as source bbc_chinese; keep as a custom-feed example only)
     <outline type="rss" text="BBC 中文" title="BBC 中文"
              xmlUrl="https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"
              htmlUrl="https://www.bbc.com/zhongwen/simp" />

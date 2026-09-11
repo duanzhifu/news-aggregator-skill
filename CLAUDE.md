@@ -24,14 +24,15 @@ py scripts/fetch_news.py --source hackernews --limit 1 --no-save   # smoke test
 
 ### Tests
 
-`tests/` has no `__init__.py`, so `unittest discover` **fails** (`Start directory is not importable`) and discovery from root finds 0 tests. Name modules explicitly — `scripts/` resolves as a PEP 420 namespace package from the repo root:
+`tests/` has no `__init__.py`, so `unittest discover` **fails** (`Start directory is not importable`) and discovery from root finds 0 tests. Name modules explicitly — `scripts/` resolves as a PEP 420 namespace package from the repo root (equivalently, run the whole suite with `py -m unittest discover -s tests -p 'test_*.py'`):
 
 ```bash
-# Full suite (183 tests, no network)
+# Full suite (188 tests, no network)
 py -m unittest tests.test_default_sources tests.test_fetch_news tests.test_hardening \
   tests.test_llm_client tests.test_llm_summarize tests.test_markdown_tables \
   tests.test_reprocess_articles tests.test_scoring_rules tests.test_social_platforms \
-  tests.test_groq_transcribe tests.test_video_transcribe tests.test_video_to_article_dedupe
+  tests.test_groq_transcribe tests.test_video_transcribe tests.test_video_to_article_dedupe \
+  tests.test_verify_daily
 
 py -m unittest tests.test_fetch_news                              # single module
 py -m unittest tests.test_fetch_news.PlaywrightRssFallbackTests   # single class/test
@@ -44,10 +45,13 @@ Tests pass but print pipeline logs to stdout; grep for `^Ran|^OK|^FAILED` to rea
 ```bash
 py scripts/fetch_news.py --source hackernews,github --keyword "AI,Agent" --limit 5 --deep --no-save
 py scripts/push_to_obsidian.py --limit 15 --evidence-mode snapshot --vault "D:/Obsidian/自动信息获取"
-powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run_daily.ps1   # scheduled entry
+py scripts/run_daily.py   # 跨平台日报入口（paths.json → NEWS_AGGREGATOR_VAULT → OBSIDIAN_VAULT_PATH → 仓库所在库）
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run_daily.ps1   # Windows 薄壳（兼容历史计划任务）
 ```
 
-`scripts/run_daily.ps1` and `.agent/workflows/daily_briefing.md` contain **hardcoded machine-local paths** (`$skillRoot`, `$pythonPath`, `$vaultPath`). Verify them before running or sharing.
+日报写入后可运行 `py scripts/verify_daily.py --vault <库根目录> --date YYYY-MM-DD` 校验某天文章数量、翻译状态、Markdown 链接与总结噪音（QA 工具，非日常命令）。
+
+`scripts/run_daily.py`（跨平台日报入口）按 paths.json → `NEWS_AGGREGATOR_VAULT` → `OBSIDIAN_VAULT_PATH` → 仓库所在库（`<Vault>/_skill/news-aggregator-skill` 的上两级）解析 Vault；**没有 `--vault` 参数**。`.agent/workflows/daily_briefing.md` 已改为调用 `run_daily.py`（无 machine-local 路径）。
 
 ## Architecture
 
@@ -89,7 +93,7 @@ Supporting modules: `llm_summarize.py` owns every prompt and batch/retry/split s
 
 ### Prompt/config files
 
-`SKILL.md` (workflow, source table, unified report template, strict rules), `translate-summarize-SKILL.md`, `instructions/briefing_*.md` (scenario presets), `templates.md` (the `如意如意` interactive menu), `config/social_sources.json` (social keywords; override via `NEWS_AGGREGATOR_SOCIAL_CONFIG`).
+`SKILL.md` (workflow, source table, unified report template, strict rules), `.agent/translate-summarize-skill/SKILL.md` (管道行为说明，无独立运行时入口), `instructions/briefing_*.md` (scenario presets), `templates.md` (the `如意如意` interactive menu), `config/social_sources.json` (removed; social search URLs built into `scripts/social_platforms.py`, override via `NEWS_AGGREGATOR_SOCIAL_CONFIG`).
 
 ## Report conventions
 

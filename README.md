@@ -133,7 +133,7 @@ playwright install chromium
 
 ### 社交平台技术内容
 
-支持 `douyin`、`bilibili`。bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承），仅在无 topics 时兜底读取 `config/social_sources.json`；也可通过 `--keyword` 临时指定：
+支持 `douyin`、`bilibili`。bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承），搜索 URL 模板内置在 `scripts/social_platforms.py`；也可通过 `--keyword` 临时指定：
 
 ```bash
 python scripts/fetch_news.py --source douyin,bilibili --keyword "前端,AI,软件工程" --limit 5
@@ -149,6 +149,8 @@ python scripts/fetch_news.py --source douyin,bilibili --keyword "前端,AI,软�
 B 站已纳入常规 Obsidian 日报的默认来源，抖音需通过显式 `--source douyin` 抓取；社交来源同样使用每源 15 条上限。
 
 ### 🔍 动态搜索（AnySearch 主引擎 + Bing 兜底）
+
+> 首次使用：复制 `user_interests.json.example` → `user_interests.json` 后按需修改（文件已被 .gitignore 忽略，不会提交个人兴趣）。
 
 每日按 `user_interests.json` 的 `topics` 做全网动态搜索时，默认引擎为 **AnySearch**（`fetch_dynamic_search.py`，zone=cn、语言 zh-CN）。在 `.env` 配置 `ANYSEARCH_API_KEY`（`as_sk_` 前缀）后使用独立额度；未配置时以匿名低限额运行。
 

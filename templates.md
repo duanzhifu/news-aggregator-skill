@@ -55,14 +55,16 @@
 
 ### ☕️ 每日早报 (Daily Briefings)
 
-| # | 名称 | 命令 |
-|---|---|---|
-| 29 | 🌅 默认早报 | `push_to_obsidian.py --limit 15 --vault <Vault>` |
-| 30 | 💰 财经早报 | `push_to_obsidian.py --source wallstreetcn,36kr,tencent --limit 15 --vault <Vault>` |
-| 31 | 🤖 科技早报 | `push_to_obsidian.py --source hackernews,github,producthunt --limit 15 --vault <Vault>` |
-| 32 | 🍉 社区热点 | `push_to_obsidian.py --source v2ex,tencent --limit 15 --vault <Vault>` |
-| 33 | 🧠 AI 深度日报 | `push_to_obsidian.py --source aihot,openai,anthropic,arxiv --limit 15 --deep --vault <Vault>` |
-| 34 | 📚 深度阅读清单 | `fetch_news.py --source essays,podcasts --limit 15 --deep --no-save` |
+> 执行带「风格指引」的菜单项前，先读取对应 `instructions/briefing_*.md`，按其 Focus Areas / Report Structure / Anti-Laziness 约束组织输出。
+
+| # | 名称 | 命令 | 风格指引 |
+|---|---|---|---|
+| 29 | 🌅 默认早报 | `push_to_obsidian.py --limit 15 --vault <Vault>` | `instructions/briefing_general.md` |
+| 30 | 💰 财经早报 | `push_to_obsidian.py --source wallstreetcn,36kr,tencent --limit 15 --vault <Vault>` | `instructions/briefing_finance.md` |
+| 31 | 🤖 科技早报 | `push_to_obsidian.py --source hackernews,github,producthunt --limit 15 --vault <Vault>` | `instructions/briefing_tech.md` |
+| 32 | 🍉 社区热点 | `push_to_obsidian.py --source v2ex,tencent --limit 15 --vault <Vault>` | `instructions/briefing_social.md` |
+| 33 | 🧠 AI 深度日报 | `push_to_obsidian.py --source aihot,openai,anthropic,arxiv --limit 15 --deep --vault <Vault>` | `instructions/briefing_ai_daily.md` |
+| 34 | 📚 深度阅读清单 | `fetch_news.py --source essays,podcasts --limit 15 --deep --no-save` | —（无对应 briefing） |
 
 ---
 

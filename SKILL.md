@@ -29,6 +29,11 @@ python3 scripts/fetch_news.py --source all --limit 15 --deep --no-save
 python3 scripts/fetch_news.py --source hackernews --keyword "AI,LLM,GPT" --deep --no-save
 ```
 
+> **按主题全网动态搜索**（非固定源，如「搜索 DeepSeek」）不经过 `--source`：
+> 先看先评：`py scripts/push_to_obsidian.py --topics "DeepSeek" --dynamic-limit 5 --assess-only`
+> （搜 + AI 评估出「值得看/不值得看 + 理由」表，不写库不落盘，跑完即停）；用户挑选后，
+> 写入用 `--add-url <URL>`，写入+收藏用 `--add-url <URL> --saved`。
+
 ### Step 2: Generate Report
 
 Read the output JSON and format **every** item using the **Unified Report Template** below. Translate all content to **Simplified Chinese**.
@@ -70,6 +75,20 @@ Only the **differences** from the universal template:
 ---
 
 ## 🛠️ Tools
+
+### fetch_dynamic_search.py（动态搜索：按主题全网搜，非固定源）
+
+触发：用户说「搜索 xxx」「全网搜 xxx」「针对 xxx 主题搜一下」。
+
+| Arg | 说明 |
+| --- | --- |
+| `--topics` | 逗号分隔搜索主题（如 `"DeepSeek,Agent"`） |
+| `--dynamic-limit` | 每主题条数（默认读 `user_interests.json` 的 `limit_per_topic`） |
+| `--assess-only` | 只搜 + AI 评估出表（值得看/不值得看 + 理由 + 依据），不写库不落盘，跑完即停 |
+
+- 引擎：AnySearch（`.env` 配 `ANYSEARCH_API_KEY`，zone=cn）；主题结果全被拒时自动 Bing 登录态兜底（`cn.bing.com` + `setmkt=zh-CN`）。
+- L0 硬挡（`reject` / `block_hosts` / `block_url_patterns` + 官网首页/去重）先于 AI 评估生效；过滤只作用于动态搜索项，RSS 固定源全部保留。
+- 后续写入/收藏：`--add-url <URL>`（写入）或 `--add-url <URL> --saved`（写入+收藏），可多传。
 
 ### fetch_news.py
 
@@ -168,7 +187,7 @@ Write a daily briefing and individual article notes to an Obsidian Vault:
 py scripts/push_to_obsidian.py --vault "D:/Obsidian/自动信息获取"
 ```
 
-默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源的搜索关键词：bilibili 复用 `user_interests.json` 的 `topics`（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传），douyin 读 `config/social_sources.json`。
+默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源：bilibili 复用 `user_interests.json` 的 `topics`（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传），搜索 URL 模板内置在 `scripts/social_platforms.py`；douyin 已停用。
 
 动态搜索默认走 **AnySearch** 引擎（`.env` 配 `ANYSEARCH_API_KEY`，`fetch_dynamic_search.py`）；主题全部被拒时自动降级 **Bing 登录态**兜底重搜（`cn.bing.com` + `setmkt=zh-CN`）。诊断动态搜索问题先看日志 `[AnySearch]`/`[AnySearch Error]`/`[DynamicSearch]` 行，再按兜底链定位。
 
@@ -195,12 +214,14 @@ py scripts\push_to_obsidian.py --vault <信息流库根> --add-url <URL> [--note
 
 ### user_interests.json 配置键
 
+> 首次使用：复制 `user_interests.json.example` → `user_interests.json` 后按需修改（`user_interests.json` 已被 .gitignore 忽略，不会提交个人兴趣；`_` 开头的键是注释，程序会忽略）。
+
 | 键 | 作用 | 生效点 |
 | --- | --- | --- |
 | `topics` | 动态搜索主题，经 `--topics` 传入（bilibili 关键词同源） | `push_to_obsidian.py` |
 | `reject` | 主题拒绝词，注入 AI 准入与最终推荐 prompt | `llm_summarize.py` |
-| `daily_sources` | 定时任务默认来源（`--source`），当前 `juejin,devto,github,openai,bilibili` | `run_daily.ps1` → `--source` |
-| `limit_per_topic` | 动态搜索每主题条数（当前 5），经 `--dynamic-limit` 注入；CLI 显式传参优先 | `run_daily.ps1` → `--dynamic-limit` → `fetch_dynamic_search_news(limit_per_topic=)` |
+| `daily_sources` | 定时任务默认来源（`--source`），当前 `juejin,devto,github,openai,bilibili` | `run_daily.py` → `--source` |
+| `limit_per_topic` | 动态搜索每主题条数（当前 5），经 `--dynamic-limit` 注入；CLI 显式传参优先 | `run_daily.py` → `--dynamic-limit` → `fetch_dynamic_search_news(limit_per_topic=)` |
 | `search_query_optimization` | 搜索词 LLM 消歧开关（默认 false，见上） | `push_to_obsidian.py` |
 | `block_url_patterns` | L0 零成本硬挡：匹配 URL **path** 的动态项（如 `/docs/`、`/tutorials/`），不进 LLM | `apply_zero_cost_rules` |
 | `block_hosts` | L0 零成本硬挡：匹配 hostname（精确或 `.host` 子域）的动态项（当前 8 条域名黑名单） | `apply_zero_cost_rules` |
@@ -230,6 +251,7 @@ When the user says **"如意如意"** or asks for "menu/help":
 1. Read `templates.md`
 2. Display the menu
 3. Execute the user's selection using the **Universal Workflow** above
+4. 对带「风格指引」标注的菜单项（早报 29–33；2 号 🐙 开源趋势 → `instructions/briefing_github.md`）：先读取对应的 `instructions/briefing_*.md`，按其 Focus Areas / Report Structure / Anti-Laziness 约束组织输出。
 
 ---
 
@@ -282,7 +304,12 @@ When the user says **"如意如意"** or asks for "menu/help":
 
 ### 定时运行
 
-Windows 使用 `scripts/run_daily.ps1` 作为任务计划程序入口。运行前检查其中的仓库、Python 和 Vault 路径；脚本会执行已配置的默认日报来源。
+跨平台入口为 `scripts/run_daily.py`（Windows / macOS / Linux 通用；自动读 skill 根配置拼
+`--source/--topics/--dynamic-limit`，日志写 `logs/daily_task.log`，Vault 无效或指向主库
+直接终止）。Windows 计划任务历史配置可继续指向 `scripts/run_daily.ps1`（薄壳转发），
+新部署建议直接指向 `run_daily.py`。调度器随平台任选（schtasks / launchd / cron /
+Hermes cron / 手动），只做一件事：到点执行 `run_daily.py`。运行前检查 `run_daily.py`
+读到的 paths.json / 环境变量路径；脚本会执行已配置的默认日报来源。
 
 ### 内容质量评估与推荐过滤
 
@@ -300,10 +327,21 @@ AI 根据用户主题、页面快照中的可验证证据、内容完整度、�
 
 ---
 
+### 视频转文章（video_to_article.py）
+
+用户给视频 URL 或本地视频文件（可批量文件夹），要求转成结构化中文文章 → 运行：
+
+```bash
+py scripts/video_to_article.py <视频URL|本地视频文件|视频文件夹> [--out 输出根] [--topic 专题名] [--no-frames]
+```
+
+AI 产出四件套：frontmatter + 摘要 + 大纲 + 分节正文（带时间点与截图）+ 思维导图（Mermaid）+ 完整文稿（折叠 callout）。依赖 skill 本地 `.env` 的 `GROQ_API_KEY`（转写）与 `LLM_*`（写文章），需要 ffmpeg 抽音频与截图。
+
+---
+
 ### 社交平台技术内容
 
-新增平台 key：`douyin`、`bilibili`。默认关键词配置位于
-`config/social_sources.json`，也可用 `NEWS_AGGREGATOR_SOCIAL_CONFIG` 指定本地配置文件。
+新增平台 key：`douyin`、`bilibili`。bilibili 搜索关键词复用 `user_interests.json` 的 `topics`；搜索 URL 模板内置在 `scripts/social_platforms.py`（`_DEFAULT_SEARCH_URLS`）。`douyin` 已停用。如需自定义搜索 URL，可用 `NEWS_AGGREGATOR_SOCIAL_CONFIG` 指向含 `search_urls` 字段的配置文件，优先于内置默认。
 Bilibili 已纳入常规 Obsidian 日报的默认来源列表；抖音仍可通过显式 `--source douyin` 单独抓取。
 
 
@@ -313,8 +351,9 @@ python scripts/fetch_news.py --source douyin,bilibili --limit 5 --keyword "前�
 
 适配器优先使用显式配置的 JSON API：`SOCIAL_API_URL_DOUYIN`、`SOCIAL_API_URL_BILIBILI`（当前仅这两个平台已接入）；可选的
 `SOCIAL_API_TOKEN_<PLATFORM>` 会作为 Bearer Token 发送。未配置或调用失败时，降级到
-Playwright 公开搜索页。浏览器会话目录可通过 `NEWS_AGGREGATOR_BROWSER_PROFILE` 配置，
-不要把 Cookie、Token 或会话目录提交到仓库。
+Playwright 公开搜索页。浏览器会话目录可通过 `NEWS_AGGREGATOR_BROWSER_PROFILE` 配置；未配置时默认查找 `D:\news-aggregator-browser-profile`（执行过 `setup_social_login.py` 登录才有登录态，否则自动用临时会话），
+不要把 Cookie、Token 或会话目录提交到仓库。首次使用或登录失效时，运行
+`py scripts/setup_social_login.py --browser edge --platform all` 在专用 Edge 窗口中登录；会话默认保存在仓库外的 `D:\news-aggregator-browser-profile`，不会读取日常 Edge Profile。
 
 社交平台抓取标题、简介、作者、发布时间和可见互动数据。Bilibili 和抖音只保留真实视频链接，
 不下载视频；视频内容已接入两级转录：①平台字幕 API（bilibili，cookie）②Groq Whisper 语音兜底（fetch_news 视频分支，method="groq_transcript"）。
@@ -325,4 +364,4 @@ GitHub Trending 继续保留热榜排名，并通过 GitHub API 补充仓库最�
 
 - Python 3.10+, `pip install -r requirements.txt`
 - Playwright（仅深度抓取或需要浏览器的来源）：`playwright install chromium`
-- Obsidian Vault 路径：通过 `--vault` 或 `OBSIDIAN_VAULT_PATH` 指定
+- Obsidian Vault 路径：`push_to_obsidian.py` 用 `--vault` / `OBSIDIAN_VAULT_PATH`；`run_daily.py` 按 paths.json → `NEWS_AGGREGATOR_VAULT` → `OBSIDIAN_VAULT_PATH` → 仓库所在库解析（**无 `--vault` 参数**；指向主库会拒绝写入）
