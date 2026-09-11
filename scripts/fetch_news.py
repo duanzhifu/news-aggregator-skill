@@ -42,48 +42,6 @@ import warnings
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 def parse_item_datetime(item):
-    """Parse the publication timestamp exposed by a source."""
-    fields = (
-        'time', 'published', 'published_at', 'pub_time', 'publish_time',
-        'created_at', 'created_at_i', 'timestamp', 'date', 'updated_at',
-        'time_ms',
-    )
-    value = next((item.get(field) for field in fields if item.get(field) not in (None, '')), None)
-    if value is None:
-        return None
-    if isinstance(value, (int, float)) or str(value).strip().isdigit():
-        number = float(value)
-        if number > 10**12:
-            number /= 1000
-        if number > 10**9:
-            return datetime.fromtimestamp(number, tz=timezone.utc)
-
-    text = re.sub(r'^\s*⚠️\s*', '', str(value).strip())
-    lowered = text.casefold()
-    if lowered in {'today', 'real-time', 'realtime', 'hot', 'updated recently', 'recent'}:
-        return datetime.now(timezone.utc)
-    relative = re.search(r'(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|分钟前|分钟|小时|天)\s*(ago|前)?', lowered)
-    if relative:
-        amount = float(relative.group(1))
-        unit = relative.group(2)
-        if unit.startswith(('minute', 'min')) or unit in {'分钟前', '分钟'}:
-            return datetime.now(timezone.utc) - timedelta(minutes=amount)
-        if unit.startswith(('hour', 'hr')) or unit in {'小时'}:
-            return datetime.now(timezone.utc) - timedelta(hours=amount)
-        return datetime.now(timezone.utc) - timedelta(days=amount)
-    try:
-        parsed = parsedate_to_datetime(text)
-    except (TypeError, ValueError, OverflowError):
-        try:
-            parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
-        except (TypeError, ValueError, OverflowError):
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def parse_item_datetime(item):
     """Parse common feed, API and Chinese relative timestamps consistently."""
     fields = (
         'time', 'published', 'published_at', 'pub_time', 'publish_time',
@@ -1509,7 +1467,7 @@ def main():
     for name, url in AI_NEWSLETTER_SOURCES:
         key = name.lower().replace(' ', '').replace("'", "")
         # Check if this source needs Playwright
-        if "Ben's Bites" in name or "The Rundown" in name:
+        if "Ben's Bites" in name:
              sources_map[key] = lambda limit=10, k=None, u=url, n=name: filter_items(fetch_rss_with_playwright(u, n, limit), k)[:limit]
         else:
              sources_map[key] = create_single_rss_fetcher(url, name)

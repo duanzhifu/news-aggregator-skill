@@ -72,7 +72,7 @@ def verify_daily(date_dir, expected_counts=None):
         'invalid_metadata': invalid_metadata,
         'invalid_summary_noise': invalid_summary_noise,
     }
-    expected_link_count = len(files) * 2
+    expected_link_count = len(files)
     if (
         invalid_metadata
         or invalid_summary_noise

@@ -2311,6 +2311,84 @@ def add_manual_urls(urls, vault_path, note='', saved=False):
         print(f"  失败: {f['url']}: {f['error']}", file=sys.stderr)
 
 
+def assess_dynamic_search(topics, dynamic_limit=None):
+    """--assess-only：只动态搜索 + AI 评估出表，不写库、不落盘。
+
+    供用户「先看结果再决定」：搜完出表即停，后续由 --add-url（写入）或
+    --add-url --saved（写入 + 收藏）单独执行。
+    """
+    cfg = load_user_config()
+    dynamic_limit = dynamic_limit or cfg.get('limit_per_topic', 3)
+    optimize = bool(cfg.get('search_query_optimization'))
+    reject = cfg.get('reject') or []
+
+    print(f"\n{'='*60}")
+    print(f"[AssessOnly] 动态搜索主题: {', '.join(topics)}，每主题 {dynamic_limit} 条")
+    print(f"{'='*60}")
+
+    # ① 动态搜索
+    try:
+        try:
+            from fetch_dynamic_search import fetch_dynamic_search_news
+        except ModuleNotFoundError:
+            from scripts.fetch_dynamic_search import fetch_dynamic_search_news
+    except Exception as e:
+        print(f"[AssessOnly Error] 动态搜索模块导入失败: {e}", file=sys.stderr)
+        return
+    try:
+        items = fetch_dynamic_search_news(topics, limit_per_topic=dynamic_limit, optimize=optimize)
+    except Exception as e:
+        print(f"[AssessOnly Error] 动态搜索执行失败: {e}", file=sys.stderr)
+        return
+    if not items:
+        print("[AssessOnly] 未检索到任何结果。")
+        return
+
+    # ② L0 硬挡（reject/block_hosts/block_url_patterns）
+    items = apply_zero_cost_rules(items, cfg)
+    if not items:
+        print("[AssessOnly] 全部结果被 L0 硬挡规则过滤。")
+        return
+
+    # ③ 用户画像（失败回退按 topics 判断）
+    user_profile = None
+    try:
+        try:
+            from scripts.llm_summarize import get_user_profile
+        except ModuleNotFoundError:
+            from llm_summarize import get_user_profile
+        user_profile = get_user_profile(max_progress_entries=3)
+    except Exception as e:
+        print(f"[AssessOnly] 用户画像获取失败，回退按 topics 判断: {e}", file=sys.stderr)
+
+    # ④ AI 评估
+    selection = select_for_ai_fetch(items, topics=topics, recency_days=7, reject=reject, user_profile=user_profile)
+
+    # ⑤ 出表（不落盘）
+    _print_assess_table(selection)
+
+
+def _print_assess_table(selection):
+    """把评估结果打印成「值得看/不值得看 + 理由 + 依据」表。"""
+    print(f"\n📋 动态搜索评估表（共 {len(selection)} 条）\n")
+    print("=" * 110)
+    for i, item in enumerate(selection, 1):
+        verdict = '✅ 值得看' if item.get('ai_selected') is True else '❌ 不值得'
+        title = item.get('title_zh') or item.get('title') or '(无标题)'
+        url = item.get('url') or ''
+        reason = item.get('selection_reason') or '(无理由)'
+        evidence = item.get('evidence_points') or []
+        print(f"{i}. {verdict}  {title}")
+        print(f"   URL: {url}")
+        print(f"   理由: {reason}")
+        if evidence:
+            print(f"   依据: {'；'.join(evidence)}")
+        print("-" * 110)
+    print("\n后续操作：")
+    print("  写入（不收藏）: py scripts\\push_to_obsidian.py --vault <库> --add-url <URL>")
+    print("  写入 + 收藏   : py scripts\\push_to_obsidian.py --vault <库> --add-url <URL> --saved")
+
+
 def main():
     parser = argparse.ArgumentParser(description='推送新闻到 Obsidian')
     parser.add_argument('--source', default=','.join(DEFAULT_SOURCE_KEYS),
@@ -2331,7 +2409,17 @@ def main():
     parser.add_argument('--note', default='', help='手动收藏说明（非必写），写入笔记收藏理由字段并显示在收藏集合')
     parser.add_argument('--saved', action='store_true',
                         help='手动收藏已仔细看过：跳过 AI 判断，直接生成笔记并进收藏集合')
+    parser.add_argument('--assess-only', action='store_true',
+                        help='只动态搜索 + AI 评估出表（值得看/不值得看 + 理由），不写库不落盘。需配合 --topics')
     args = parser.parse_args()
+
+    # --assess-only：只搜索 + 评估出表，不写库，不需要 vault。
+    if args.assess_only:
+        topics = [topic.strip() for topic in args.topics.split(',') if topic.strip()] if args.topics else None
+        if not topics:
+            parser.error('--assess-only 需要配合 --topics "主题1,主题2" 指定搜索主题')
+        assess_dynamic_search(topics, dynamic_limit=args.dynamic_limit)
+        return
 
     vault_path = args.vault or os.environ.get('OBSIDIAN_VAULT_PATH')
     if not vault_path:

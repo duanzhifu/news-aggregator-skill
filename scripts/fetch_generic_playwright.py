@@ -1,11 +1,9 @@
 
 import sys
-import json
 import argparse
 from playwright.sync_api import sync_playwright
 
 def fetch_content(url):
-    results = []
     with sync_playwright() as p:
         try:
             # Launch Chromium (headless)
@@ -23,15 +21,13 @@ def fetch_content(url):
             
             # Go to the URL
             # Wait until network is idle which might indicate challenge is solved or feed loaded
-            response = page.goto(url, timeout=30000, wait_until="networkidle")
+            page.goto(url, timeout=30000, wait_until="networkidle")
             
             # Get content
             content = page.content()
             
             # If it's an RSS feed rendered in browser, it might be wrapped in <pre> or just text
             # Chrome often wraps XML in a style. 
-            # Let's try to get innerText of body
-            body_text = page.inner_text("body")
             
             # Print raw content for the caller (rss_parser) to handle? 
             # Or if we want to return JSON directly?

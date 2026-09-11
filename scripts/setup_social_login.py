@@ -28,7 +28,7 @@ def browser_channel(browser):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="打开可见浏览器并保存抖音和 B 站的登录会话。"
+        description="打开可见浏览器并保存抖音、B 站和 Bing 的登录会话。",
     )
     parser.add_argument(
         "--platform",

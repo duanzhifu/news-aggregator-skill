@@ -11,6 +11,11 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "social_sources.json"
+# 搜索页 URL 模板内置默认（原 config/social_sources.json 的 search_urls 迁移至此；
+# 优先读配置文件，缺省时用此默认。仅 bilibili 为当前活跃链路，douyin 停用中不内置。）
+_DEFAULT_SEARCH_URLS = {
+    "bilibili": "https://search.bilibili.com/all?keyword={query}",
+}
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
     "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
@@ -35,8 +40,9 @@ def load_config():
     try:
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
-    except (OSError, json.JSONDecodeError) as error:
-        print(f"Social config unavailable: {error}", file=sys.stderr)
+    except (OSError, json.JSONDecodeError):
+        # 配置文件缺失或无配置时静默降级为空 dict（config/social_sources.json 已迁入代码，
+        # search_urls 由 social_platforms._DEFAULT_SEARCH_URLS 兜底）
         return {"keywords": {}, "accounts": {}, "search_urls": {}}
 
 
@@ -200,7 +206,9 @@ def browser_page(platform, url, limit):
 
 def browser_search(platform, query, limit):
     config = load_config()
-    template = config.get("search_urls", {}).get(platform)
+    template = (config.get("search_urls", {}) or {}).get(platform)
+    if not template:
+        template = _DEFAULT_SEARCH_URLS.get(platform)
     if not template:
         return []
     return browser_page(platform, template.format(query=quote(query, safe="")), limit)

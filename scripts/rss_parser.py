@@ -4,7 +4,6 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
-from datetime import datetime
 
 def clean_text(text):
     if not text: return ""
@@ -39,7 +38,10 @@ def parse_rss_content(content, source_name, limit=5):
                 elif link_tag.get_text(strip=True):
                     link = link_tag.get_text(strip=True)
                 if not link:
-                    link = str(link_tag.next_sibling).strip()
+                    # 仅当相邻节点是纯文本（无标签名）时才取，避免把下一个兄弟元素 HTML 污染进 url
+                    sibling = link_tag.next_sibling
+                    if sibling is not None and getattr(sibling, 'name', None) is None:
+                        link = str(sibling).strip()
             
             if not link:
                 guid = entry.find('guid')
@@ -54,13 +56,13 @@ def parse_rss_content(content, source_name, limit=5):
             content_encoded = entry.find('content:encoded')
             description = entry.find('description')
             summary = entry.find('summary')
-            content = entry.find('content')
+            content_el = entry.find('content')
             
             raw_summary = ""
             if content_encoded: raw_summary = content_encoded.get_text()
             elif description: raw_summary = description.get_text()
             elif summary: raw_summary = summary.get_text()
-            elif content: raw_summary = content.get_text()
+            elif content_el: raw_summary = content_el.get_text()
             
             soup_desc = BeautifulSoup(raw_summary, 'html.parser')
             _summary_text = soup_desc.get_text(separator=' ', strip=True)

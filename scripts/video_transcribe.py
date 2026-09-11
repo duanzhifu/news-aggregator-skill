@@ -15,7 +15,6 @@
 由下游 fetch_news 回退到"视频页 DOM 抓简介"，绝不中断整个拉取管线。
 """
 import json
-import os
 import re
 import sys
 import time

@@ -1,4 +1,3 @@
-import sys
 import re
 import base64
 from urllib.parse import urlparse, parse_qsl
@@ -61,10 +60,3 @@ def is_site_homepage(url: str) -> bool:
         return True
     # "/index" already covered; keep "/zh-cn" style locale homepages out of 4.3 for now.
     return False
-
-if __name__ == "__main__":
-    test_url = "https://www.bing.com/ck/a?!&&p=6feed642c9f9f1468469a9a8e91942c7d3c6db4355a7cf28fdf46b9f7dd9aa84JmltdHM9MTc4NzUyOTYwMA&ptn=3&ver=2&hsh=4&fclid=3fb911e4-a4d4-6c0e-3955-065ba5d16da0&u=a1aHR0cHM6Ly93d3cucnVub29iLmNvbS9haS1hZ2VudC9haS1hZ2VudC10dXRvcmlhbC5odG1s&ntb=1"
-    real, key, cn = clean_and_map_url(test_url)
-    print(f"Real URL: {real}")
-    print(f"Source Key: {key}")
-    print(f"Source CN: {cn}")

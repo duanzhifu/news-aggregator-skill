@@ -9,14 +9,12 @@
   py scripts/reprocess_articles.py --vault "D:/Obsidian/自动信息获取"
 """
 import argparse
-import html
 import json
 import os
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import unquote
 
 if sys.platform == 'win32':
     try:
@@ -124,36 +122,18 @@ def translate_metadata_for_date(root, date_value):
             },
         })
 
-    repair_path = Path(__file__).parent.parent / 'repairs' / f'metadata_{date_value}.json'
-    repairs = {}
-    if repair_path.exists():
-        repairs = json.loads(repair_path.read_text(encoding='utf-8'))
-        print(f'已加载日期修复清单: {repair_path}')
-
     translated = [None] * len(records)
     llm_indexes = []
     llm_items = []
     for index, record in enumerate(records):
-        repair = repairs.get(record['item']['title'])
-        if repair:
-            translated[index] = {
-                **record['item'],
-                'title_zh': repair[0],
-                'summary_zh': repair[1],
-                'translation_status': 'success',
-            }
-        else:
-            llm_indexes.append(index)
-            llm_items.append(record['item'])
-    if repairs and llm_items:
-        missing = '\n'.join(f"  - {item['title']}" for item in llm_items)
-        raise ValueError(f'日期修复清单缺少 {len(llm_items)} 篇文章：\n{missing}')
+        llm_indexes.append(index)
+        llm_items.append(record['item'])
     if llm_items:
         llm_results = translate_items(llm_items, translate_content=False)
         for index, result in zip(llm_indexes, llm_results):
             translated[index] = result
 
-    print(f'发现 {len(records)} 篇需要翻译元数据的文章，其中清单命中 {len(records) - len(llm_items)} 篇。')
+    print(f'发现 {len(records)} 篇需要翻译元数据的文章。')
     rename_map = {}
     success_count = 0
     failed_count = 0
