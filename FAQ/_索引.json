@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-12T10:30:00",
+  "updated_at": "2026-09-12T11:00:00",
   "records": {
     "newsaggregatorskill的动态搜索怎么触发": {
       "question": "news-aggregator-skill 的动态搜索怎么触发？",
@@ -30,6 +30,60 @@
       "question": "同一问题跨日期遇到新角度怎么办？",
       "file": "2026-09-12.md",
       "added_at": "2026-09-12",
+      "updated_at": "2026-09-12"
+    },
+    "动态搜索遇到多义词搜到错误义项怎么办": {
+      "question": "动态搜索遇到多义词（如 trellis）搜到错误义项怎么办？",
+      "file": "2026-09-08.md",
+      "added_at": "2026-09-08",
+      "updated_at": "2026-09-12"
+    },
+    "skill仓库可以从库外移进obsidian库吗": {
+      "question": "skill 仓库可以从库外移进 Obsidian 库吗？迁移会丢东西吗？",
+      "file": "2026-09-08.md",
+      "added_at": "2026-09-08",
+      "updated_at": "2026-09-12"
+    },
+    "userinterestsjson是干什么的为什么不进git仓库": {
+      "question": "user_interests.json 是干什么的？为什么它不进 git 仓库？",
+      "file": "2026-09-08.md",
+      "added_at": "2026-09-08",
+      "updated_at": "2026-09-12"
+    },
+    "scripts里main写死的测试词为什么存在": {
+      "question": "scripts 里 __main__ 写死的测试词（如 [\"大模型\",\"SDD\"]）为什么存在？",
+      "file": "2026-09-08.md",
+      "added_at": "2026-09-08",
+      "updated_at": "2026-09-12"
+    },
+    "定时任务勾选唤醒计算机以运行此任务是怎么工作的": {
+      "question": "定时任务勾选「唤醒计算机以运行此任务」是怎么工作的？需要算开机时间吗？",
+      "file": "2026-09-09.md",
+      "added_at": "2026-09-09",
+      "updated_at": "2026-09-12"
+    },
+    "rundailyps1改动后diff显示有变化但肉眼看不出区别": {
+      "question": "run_daily.ps1 改动后 diff 显示有变化但肉眼看不出区别？",
+      "file": "2026-09-09.md",
+      "added_at": "2026-09-09",
+      "updated_at": "2026-09-12"
+    },
+    "让agent调用定时任务为什么它不应擅自修改我的文件": {
+      "question": "让 Agent「调用定时任务」，为什么它不应擅自修改我的文件？",
+      "file": "2026-09-09.md",
+      "added_at": "2026-09-09",
+      "updated_at": "2026-09-12"
+    },
+    "社交登录态为什么保存在dnewsaggregatorbrowserprofile换浏览器会变吗": {
+      "question": "社交登录态为什么保存在 D:\\news-aggregator-browser-profile？换浏览器会变吗？",
+      "file": "2026-09-10.md",
+      "added_at": "2026-09-10",
+      "updated_at": "2026-09-12"
+    },
+    "userinterestsjson不进git别人clone后怎么知道要创建": {
+      "question": "user_interests.json 不进 git，别人 clone 后怎么知道要创建？",
+      "file": "2026-09-10.md",
+      "added_at": "2026-09-10",
       "updated_at": "2026-09-12"
     }
   }
