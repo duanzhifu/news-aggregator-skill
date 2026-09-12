@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-12T11:00:00",
+  "updated_at": "2026-09-12T11:30:00",
   "records": {
     "newsaggregatorskill的动态搜索怎么触发": {
       "question": "news-aggregator-skill 的动态搜索怎么触发？",
@@ -84,6 +84,30 @@
       "question": "user_interests.json 不进 git，别人 clone 后怎么知道要创建？",
       "file": "2026-09-10.md",
       "added_at": "2026-09-10",
+      "updated_at": "2026-09-12"
+    },
+    "userinterestsjson里的sources是干什么的为什么动态搜索只出那4个源的内容": {
+      "question": "user_interests.json 里的 sources 是干什么的？为什么动态搜索只出那 4 个源的内容？",
+      "file": "2026-08-24.md",
+      "added_at": "2026-08-24",
+      "updated_at": "2026-09-12"
+    },
+    "搜索人工智能前端开发这种模糊大词会怎么样": {
+      "question": "搜索「人工智能、前端开发」这种模糊大词会怎么样？",
+      "file": "2026-08-24.md",
+      "added_at": "2026-08-24",
+      "updated_at": "2026-09-12"
+    },
+    "抖音小红书能全自动抓吗为什么不行": {
+      "question": "抖音、小红书能全自动抓吗？为什么不行？",
+      "file": "2026-08-24.md",
+      "added_at": "2026-08-24",
+      "updated_at": "2026-09-12"
+    },
+    "b站搜索结果为什么会混进非视频链接url白名单是干嘛的": {
+      "question": "B 站搜索结果为什么会混进非视频链接？URL 白名单是干嘛的？",
+      "file": "2026-08-29.md",
+      "added_at": "2026-08-29",
       "updated_at": "2026-09-12"
     }
   }
