@@ -335,7 +335,7 @@ AI 根据用户主题、页面快照中的可验证证据、内容完整度、�
 py scripts/video_to_article.py <视频URL|本地视频文件|视频文件夹> [--out 输出根] [--topic 专题名] [--no-frames]
 ```
 
-AI 产出四件套：frontmatter + 摘要 + 大纲 + 分节正文（带时间点与截图）+ 思维导图（Mermaid）+ 完整文稿（折叠 callout）。依赖 skill 本地 `.env` 的 `GROQ_API_KEY`（转写）与 `LLM_*`（写文章），需要 ffmpeg 抽音频与截图。
+AI 产出四件套：frontmatter + 摘要 + 大纲 + 分节正文（带时间点与截图）+ 思维导图（Mermaid）+ 完整文稿（折叠 callout）。输出根默认 `<信息流库>/视频整理`（跟随仓库相对解析；可用 paths.json 的 `video_out` 键或 `--out` 参数覆盖）。依赖 skill 本地 `.env` 的 `GROQ_API_KEY`（转写）与 `LLM_*`（写文章），需要 ffmpeg 抽音频与截图。
 
 ---
 

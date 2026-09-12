@@ -281,7 +281,7 @@ ANYSEARCH_API_KEY=<在这里填入 AnySearch 真实 key,勿提交>   # https://a
 
 ### 配置本机路径
 
-定时任务无需手工编辑脚本路径：`run_daily.py` 按 paths.json → `NEWS_AGGREGATOR_VAULT` → `OBSIDIAN_VAULT_PATH` → 仓库所在库解析 Vault；浏览器 Profile 默认 `D:\news-aggregator-browser-profile`（可用 paths.json 的 `browser_profile` 覆盖）。`run_daily.ps1` 仅作历史计划任务兼容薄壳（自动找本机 Python312）。日志写入 `logs/daily_task.log`。常规日报来源由 `user_interests.json` 的 `daily_sources` 控制（当前配置：`juejin,devto,github,openai,bilibili`），每源 15 条；抖音需显式指定。
+定时任务无需手工编辑脚本路径：`run_daily.py` 按 paths.json → `NEWS_AGGREGATOR_VAULT` → `OBSIDIAN_VAULT_PATH` → 仓库所在库解析 Vault；浏览器 Profile 默认 `D:\news-aggregator-browser-profile`（可用 paths.json 的 `browser_profile` 覆盖）。视频转文章输出根默认 `<信息流库>/视频整理`（跟随仓库相对解析，与 run_daily 同款；可用 paths.json 的 `video_out` 键覆盖为任意目录）。`run_daily.ps1` 仅作历史计划任务兼容薄壳（自动找本机 Python312）。日志写入 `logs/daily_task.log`。常规日报来源由 `user_interests.json` 的 `daily_sources` 控制（当前配置：`juejin,devto,github,openai,bilibili`），每源 15 条；抖音需显式指定。
 
 ### 手动运行验证
 

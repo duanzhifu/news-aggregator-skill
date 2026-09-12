@@ -38,7 +38,41 @@ except ModuleNotFoundError:
     from scripts.video_transcribe import fetch_video_transcript, fetch_video_transcript_segments, is_video_site
     from scripts.llm_client import call_llm
 
-DEFAULT_OUT = r"D:\Obsidian\自动信息获取\视频整理"
+def _resolve_default_out():
+    """输出根目录回退链：paths.json 的 video_out/vault_path → 仓库所在库/视频整理。
+
+    与 run_daily.py 同款相对解析：仓库位于 <Vault>/_skill/news-aggregator-skill 时，
+    上两级即信息流库根；克隆者零配置可用，换输出路基只需改 paths.json。
+    """
+    try:
+        from pathlib import Path as _Path
+    except ImportError:
+        return r"D:\Obsidian\自动信息获取\视频整理"
+    try:
+        skill_root = _Path(__file__).resolve().parent.parent
+        paths = {}
+        _paths_file = skill_root / "paths.json"
+        if _paths_file.is_file():
+            try:
+                import json as _json
+                paths = _json.loads(_paths_file.read_text(encoding="utf-8"))
+            except Exception:
+                paths = {}
+        # 优先 paths.json 的 video_out（视频输出专用键）；其次 vault_path 拼接视频整理
+        out_raw = str(paths.get("video_out") or paths.get("vault_path") or "").strip()
+        if out_raw:
+            if paths.get("video_out"):
+                return out_raw
+            return str(_Path(out_raw) / "视频整理")
+        nested = skill_root.parent.parent
+        if nested.is_dir():
+            return str(nested / "视频整理")
+    except Exception:
+        pass
+    return r"D:\Obsidian\自动信息获取\视频整理"
+
+
+DEFAULT_OUT = _resolve_default_out()
 _VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".flv", ".wmv", ".ts", ".webm", ".m4v"}
 _CHUNK_CHARS = 8000
 _SINGLE_CALL_CHARS = 14000
