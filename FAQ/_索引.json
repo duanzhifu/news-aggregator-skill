@@ -1,5 +1,36 @@
 {
   "version": 1,
-  "updated_at": "",
-  "records": {}
+  "updated_at": "2026-09-12T10:30:00",
+  "records": {
+    "newsaggregatorskill的动态搜索怎么触发": {
+      "question": "news-aggregator-skill 的动态搜索怎么触发？",
+      "file": "2026-09-12.md",
+      "added_at": "2026-09-12",
+      "updated_at": "2026-09-12"
+    },
+    "notionknowledgecapture的faq机制核心是什么": {
+      "question": "notion-knowledge-capture 的 FAQ 机制核心是什么？",
+      "file": "2026-09-12.md",
+      "added_at": "2026-09-12",
+      "updated_at": "2026-09-12"
+    },
+    "仓库的mistakesmd和faq机制是什么关系": {
+      "question": "仓库的 MISTAKES.md 和 FAQ 机制是什么关系？",
+      "file": "2026-09-12.md",
+      "added_at": "2026-09-12",
+      "updated_at": "2026-09-12"
+    },
+    "faq去重逻辑是什么": {
+      "question": "FAQ 去重逻辑是什么？",
+      "file": "2026-09-12.md",
+      "added_at": "2026-09-12",
+      "updated_at": "2026-09-12"
+    },
+    "同一问题跨日期遇到新角度怎么办": {
+      "question": "同一问题跨日期遇到新角度怎么办？",
+      "file": "2026-09-12.md",
+      "added_at": "2026-09-12",
+      "updated_at": "2026-09-12"
+    }
+  }
 }
