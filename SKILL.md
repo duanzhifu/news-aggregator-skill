@@ -29,10 +29,8 @@ python3 scripts/fetch_news.py --source all --limit 15 --deep --no-save
 python3 scripts/fetch_news.py --source hackernews --keyword "AI,LLM,GPT" --deep --no-save
 ```
 
-> **按主题全网动态搜索**（非固定源，如「搜索 DeepSeek」）不经过 `--source`：
-> 先看先评：`py scripts/push_to_obsidian.py --topics "DeepSeek" --dynamic-limit 5 --assess-only`
-> （搜 + AI 评估出「值得看/不值得看 + 理由」表，不写库不落盘，跑完即停）；用户挑选后，
-> 写入用 `--add-url <URL>`，写入+收藏用 `--add-url <URL> --saved`。
+> **按主题全网动态搜索**（非固定源，如「搜索 DeepSeek」）不经过 `--source`，完整操作见 `.agent/dynamic-search/SKILL.md`：
+> 先看先评：`py scripts/push_to_obsidian.py --topics "DeepSeek" --dynamic-limit 5 --assess-only`（搜 + AI 评估出表，不写库不落盘）；写入用 `--add-url <URL>`，写入+收藏用 `--add-url <URL> --saved`。
 
 ### Step 2: Generate Report
 
@@ -78,17 +76,9 @@ Only the **differences** from the universal template:
 
 ### fetch_dynamic_search.py（动态搜索：按主题全网搜，非固定源）
 
-触发：用户说「搜索 xxx」「全网搜 xxx」「针对 xxx 主题搜一下」。
+触发：用户说「搜索 xxx」「全网搜 xxx」「针对 xxx 主题搜一下」。**完整操作手册见 `.agent/dynamic-search/SKILL.md`**（命令 / 引擎链 / L0 硬挡 / 多义词坑 / 配置键）。
 
-| Arg | 说明 |
-| --- | --- |
-| `--topics` | 逗号分隔搜索主题（如 `"DeepSeek,Agent"`） |
-| `--dynamic-limit` | 每主题条数（默认读 `user_interests.json` 的 `limit_per_topic`） |
-| `--assess-only` | 只搜 + AI 评估出表（值得看/不值得看 + 理由 + 依据），不写库不落盘，跑完即停 |
-
-- 引擎：AnySearch（`.env` 配 `ANYSEARCH_API_KEY`，zone=cn）；主题结果全被拒时自动 Bing 登录态兜底（`cn.bing.com` + `setmkt=zh-CN`）。
-- L0 硬挡（`reject` / `block_hosts` / `block_url_patterns` + 官网首页/去重）先于 AI 评估生效；过滤只作用于动态搜索项，RSS 固定源全部保留。
-- 后续写入/收藏：`--add-url <URL>`（写入）或 `--add-url <URL> --saved`（写入+收藏），可多传。
+速查：先看先评 `py scripts\push_to_obsidian.py --topics "主题" --dynamic-limit 5 --assess-only`（不写库）；写入 `--add-url <URL>`、写入+收藏 `--add-url <URL> --saved`，可多传。
 
 ### fetch_news.py
 
@@ -189,7 +179,7 @@ py scripts/push_to_obsidian.py --vault "D:/Obsidian/自动信息获取"
 
 默认来源为 `juejin,devto,github,openai,bilibili`，每源上限为 15 条。可用 `--source` 覆盖默认来源；如需单独抓取抖音，可显式指定 `--source douyin`。日报默认让 AI 先从来源元数据中选择值得打开的候选，再使用 `--evidence-mode snapshot` 读取完整 DOM 正文并逐段审阅；`--deep` 在此基础上将原文正文写入笔记。社交来源：bilibili 复用 `user_interests.json` 的 `topics`（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传），搜索 URL 模板内置在 `scripts/social_platforms.py`；douyin 已停用。
 
-动态搜索默认走 **AnySearch** 引擎（`.env` 配 `ANYSEARCH_API_KEY`，`fetch_dynamic_search.py`）；主题全部被拒时自动降级 **Bing 登录态**兜底重搜（`cn.bing.com` + `setmkt=zh-CN`）。诊断动态搜索问题先看日志 `[AnySearch]`/`[AnySearch Error]`/`[DynamicSearch]` 行，再按兜底链定位。
+动态搜索引擎链（AnySearch 主 + Bing 兜底）与诊断详见 `.agent/dynamic-search/SKILL.md`；日志特征 `[AnySearch]`（成功）/`[AnySearch Error]`（失败）/`[DynamicSearch]`（Bing 兜底）。
 
 `user_interests.json` 的 `search_query_optimization`（默认 `false`）控制**搜索词 LLM 消歧**：开启时每个 topic 先经 LLM 消歧为 1~3 个变体、全搜合并（多变体每变体降为 2 条），用于英文多义词（如 trellis）防错义项；默认关闭零成本，仅在动态搜索英文多义词 topic 翻车时开启。消歧失败自动回退原词直搜，不影响主流程。
 
