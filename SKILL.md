@@ -320,13 +320,9 @@ AI 根据用户主题、页面快照中的可验证证据、内容完整度、�
 
 ### 视频转文章（video_to_article.py）
 
-用户给视频 URL 或本地视频文件（可批量文件夹），要求转成结构化中文文章 → 运行：
+触发：用户给视频 URL / 本地视频文件 / 视频文件夹，要求转成结构化中文文章。**完整操作手册见 `.agent/video-to-article/SKILL.md`**（转录链 / 四件套 / 去重 / 依赖 / 关键坑）。
 
-```bash
-py scripts/video_to_article.py <视频URL|本地视频文件|视频文件夹> [--out 输出根] [--topic 专题名] [--no-frames]
-```
-
-AI 产出四件套：frontmatter + 摘要 + 大纲 + 分节正文（带时间点与截图）+ 思维导图（Mermaid）+ 完整文稿（折叠 callout）。输出根默认 `<信息流库>/视频整理`（跟随仓库相对解析；可用 paths.json 的 `video_out` 键或 `--out` 参数覆盖）。依赖 skill 本地 `.env` 的 `GROQ_API_KEY`（转写）与 `LLM_*`（写文章），需要 ffmpeg 抽音频与截图。
+速查：`py scripts\video_to_article.py <视频URL|本地视频文件|视频文件夹> [--out 输出根] [--topic 专题名] [--no-frames]`；输出根默认 `<信息流库>/视频整理`（paths.json `video_out` 或 `--out` 覆盖）；依赖 `.env` 的 `GROQ_API_KEY` 与 `LLM_*` + ffmpeg。
 
 ---
 
