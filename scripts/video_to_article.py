@@ -663,13 +663,38 @@ def _save_index(index):
         print(f"  [索引] 写失败：{e}", file=sys.stderr)
 
 
-def _find_exact_duplicate(target):
-    """精确指纹查重：命中返回索引记录 dict（含 output_md），未命中返回 None。"""
+def _find_exact_duplicate(target, topic, out_root, today):
+    """精确指纹查重（双重）：① processed_index.json 记录；② 扫描专题目录下文章 frontmatter 的来源兜底。
+
+    崩溃残留（索引未写但文章/截图已落盘）时，靠 ② 也能命中，避免同一视频重复生成。
+    命中返回 dict（含 output_md），未命中返回 None。
+    """
     key = _fingerprint_key(target)
-    if key is None:
-        return None
-    rec = _load_index().get("records", {}).get(key)
-    return rec if isinstance(rec, dict) else None
+    if key:
+        rec = _load_index().get("records", {}).get(key)
+        if isinstance(rec, dict):
+            return rec
+    # ② 磁盘兜底：同专题目录下已有文章，frontmatter 来源 == 本视频路径（本地文件）或规范化 URL
+    norm_target = _normalize_url(target) if not os.path.isfile(target) else os.path.normpath(target)
+    topic_dir = os.path.join(out_root, _sanitize_title(topic))
+    if os.path.isdir(topic_dir):
+        for name in os.listdir(topic_dir):
+            if not name.endswith(".md") or f"{today} - " not in name:
+                continue
+            p = os.path.join(topic_dir, name)
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    head = f.read(800)
+                src = re.search(r'^来源:\s*["\']?(.*?)["\']?\s*$', head, re.M)
+                if not src:
+                    continue
+                src_val = src.group(1).strip()
+                src_norm = _normalize_url(src_val) if "://" in src_val else os.path.normpath(src_val)
+                if src_norm == norm_target:
+                    return {"output_md": p, "processed_at": today, "title": name, "kind": "disk"}
+            except Exception:
+                continue
+    return None
 
 
 def _simhash(text, bits=_SIMHASH_BITS):
@@ -737,13 +762,26 @@ def _write_article(topic_dir, article, title, source_label, method, today, topic
 
 def _process_one(target, topic, out_root, do_frames, today, force=False):
     """处理单个视频，返回输出文件路径；精确查重命中（非 force）返回 None（跳过）；致命失败抛异常。"""
-    # ① 精确指纹查重（同一视频重复生成）
-    if not force:
-        dup = _find_exact_duplicate(target)
-        if dup:
-            print(f"  [去重] 已处理过：{dup.get('output_md', '?')}（{dup.get('processed_at', '?')}），跳过。--force 可重跑。",
-                  file=sys.stderr)
-            return None
+    # ① 精确指纹查重（索引 + 磁盘双重；同一视频重复生成拦截）
+    dup = _find_exact_duplicate(target, topic, out_root, today)
+    if dup and not force:
+        print(f"  [去重] 已处理过：{dup.get('output_md', '?')}（{dup.get('processed_at', '?')}），跳过。--force 可重跑。",
+              file=sys.stderr)
+        return None
+    if dup and force:
+        # force 重跑：先清理旧产物（文章 md + 对应截图目录），避免同一视频多份残留
+        old_md = dup.get("output_md")
+        if old_md and os.path.isfile(old_md):
+            old_name = os.path.splitext(os.path.basename(old_md))[0]
+            old_dir = os.path.dirname(old_md)
+            os.remove(old_md)
+            print(f"  [清理] 已删除旧文章：{old_md}", file=sys.stderr)
+            # 旧截图目录：同专题附录下 <旧文章名>截图/
+            for sub in os.listdir(os.path.join(old_dir, "附录")) if os.path.isdir(os.path.join(old_dir, "附录")) else []:
+                if sub.startswith(old_name + "截图"):
+                    import shutil
+                    shutil.rmtree(os.path.join(old_dir, "附录", sub), ignore_errors=True)
+                    print(f"  [清理] 已删除旧截图目录：{sub}", file=sys.stderr)
     print(f"  [转录] {target}", file=sys.stderr)
 
     segments, method = _get_segments(target)
@@ -777,11 +815,11 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     title = _extract_title(article)
     _, sections, points = _parse_article(article)
 
-    # 截图：仅本地文件，且有时间点
+    # 截图：仅本地文件，且有时间点。目录名用稳定专题名（非 AI 标题），同视频重跑写同一目录天然覆盖
     topic_dir = os.path.join(out_root, _sanitize_title(topic))
     frames = {}
     if do_frames and os.path.isfile(target) and has_ts:
-        subdir = f"{today} - {_sanitize_title(title)}截图"
+        subdir = f"{today} - {_sanitize_title(topic)}截图"
         frames_dir = os.path.join(topic_dir, "附录", subdir)
         frames = _extract_frames(target, sections, frames_dir)
         if frames:

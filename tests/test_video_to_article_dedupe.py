@@ -115,7 +115,7 @@ class TestFindExactDuplicate(unittest.TestCase):
         m.INDEX_PATH = self.tmp.name
         rec = {"kind": "url", "topic": "t", "output_md": "out.md", "processed_at": "2026-09-02", "simhash": "0" * 16}
         _save_index({"records": {"url:https://example.com/v": rec}})
-        got = _find_exact_duplicate("https://example.com/v/?utm_source=x")
+        got = _find_exact_duplicate("https://example.com/v/?utm_source=x", "t", self.tmp.name, "2026-09-02")
         self.assertIsNotNone(got)
         self.assertEqual(got["output_md"], "out.md")
 
@@ -123,7 +123,7 @@ class TestFindExactDuplicate(unittest.TestCase):
         import video_to_article as m
         m.INDEX_PATH = self.tmp.name
         _save_index({"records": {}})
-        self.assertIsNone(_find_exact_duplicate("https://example.com/other"))
+        self.assertIsNone(_find_exact_duplicate("https://example.com/other", "t", self.tmp.name, "2026-09-02"))
 
 
 class TestFindSemanticDuplicates(unittest.TestCase):
