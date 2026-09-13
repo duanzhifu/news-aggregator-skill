@@ -106,7 +106,7 @@ def optimize_search_query(topic, max_variants=3):
         raw = call_llm(
             [{"role": "user", "content": prompt}],
             temperature=0.2,
-            max_tokens=200,
+            max_tokens=None,
             json_mode=True,
         )
         variants = json.loads(extract_json_block(raw))

@@ -243,18 +243,18 @@ def _generate_article(timestamped_text, source_label, has_ts):
     if len(timestamped_text) <= _SINGLE_CALL_CHARS:
         return call_llm(
             [{"role": "user", "content": _build_article_prompt(timestamped_text, source_label, has_ts)}],
-            temperature=0.3, max_tokens=8000,
+            temperature=0.3, max_tokens=None,
         )
     points = []
     for chunk in _split_chunks(timestamped_text):
         p = call_llm(
             [{"role": "user", "content": _extract_points_prompt(chunk)}],
-            temperature=0.2, max_tokens=2000,
+            temperature=0.2, max_tokens=None,
         )
         points.append(p.strip())
     return call_llm(
         [{"role": "user", "content": _build_merge_prompt(points, source_label, has_ts)}],
-        temperature=0.3, max_tokens=8000,
+        temperature=0.3, max_tokens=None,
     )
 
 
@@ -373,7 +373,7 @@ def _build_mindmap_tree_via_llm(title, section_titles, points):
     """LLM 生成语义分层树，返回根节点 dict 或 None。"""
     raw = call_llm(
         [{"role": "user", "content": _build_mindmap_prompt(title, section_titles, points)}],
-        temperature=0.2, max_tokens=1500,
+        temperature=0.2, max_tokens=None,
     )
     roots = _parse_outline(raw)
     if not roots:
@@ -524,7 +524,7 @@ def _punctuate_batch(lines):
     )
     raw = call_llm(
         [{"role": "user", "content": prompt}],
-        temperature=0.1, max_tokens=4000,
+        temperature=0.1, max_tokens=None,
     )
     out = []
     for line in raw.splitlines():

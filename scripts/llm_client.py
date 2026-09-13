@@ -294,7 +294,7 @@ def _resolve_protocol():
     return _RESOLVED_PROTOCOL
 
 
-def call_llm(messages, model=None, temperature=0.3, max_tokens=4000, json_mode=False):
+def call_llm(messages, model=None, temperature=0.3, max_tokens=None, json_mode=False):
     """
     调用 LLM，协议自适应（/responses 或 /chat/completions）。
 
@@ -309,15 +309,23 @@ def call_llm(messages, model=None, temperature=0.3, max_tokens=4000, json_mode=F
         str: LLM 的文本输出
     """
     _ensure_auth()
+    global _RESOLVED_PROTOCOL
     model = model or os.environ.get('LLM_MODEL') or DEFAULT_MODEL or 'gpt-4.1-mini'
 
     protocol = _resolve_protocol()
     if protocol == 'chat':
         return _call_chat_completions_api(messages, model, temperature, max_tokens, json_mode)
     if protocol == 'responses':
-        return _call_responses_api(messages, model, temperature, max_tokens, json_mode)
+        mode = os.environ.get('LLM_API_MODE', 'auto').strip().lower()
+        try:
+            return _call_responses_api(messages, model, temperature, max_tokens, json_mode)
+        except _ProtocolUnsupported:
+            if mode == 'auto':
+                # auto 下 /responses 假成功（200 但无答案文本）→ 降级 chat，避免整批失败
+                _RESOLVED_PROTOCOL = 'chat'
+                return _call_chat_completions_api(messages, model, temperature, max_tokens, json_mode)
+            raise  # 显式锁定 responses 时不降级（用户明确要求）
     # auto：先试 /responses，协议不支持（404）时降级 /chat 并永久记录协议
-    global _RESOLVED_PROTOCOL
     try:
         result = _call_responses_api(messages, model, temperature, max_tokens, json_mode)
         _RESOLVED_PROTOCOL = 'responses'

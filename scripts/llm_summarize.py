@@ -159,7 +159,7 @@ def _translate_batch(items, translate_content, was_retried=False, split_depth=0)
         raw = call_llm(
             build_translate_prompt(items, translate_content=translate_content),
             temperature=0.3,
-            max_tokens=6000,
+            max_tokens=None,
             json_mode=True,
         )
         translated = _parse_translation_response(raw, len(items))
@@ -180,7 +180,7 @@ def _translate_batch(items, translate_content, was_retried=False, split_depth=0)
             raw = call_llm(
                 build_translate_prompt([item], translate_content=False, minimal=True),
                 temperature=0.2,
-                max_tokens=1200,
+                max_tokens=None,
                 json_mode=True,
             )
             translated = _parse_translation_response(raw, 1)[0]
@@ -489,7 +489,7 @@ def _select_batch(items, topics=None, recency_days=7, was_retried=False, split_d
     try:
         raw = call_llm(
             build_candidate_selection_prompt(items, topics, recency_days, reject=reject, user_profile=user_profile),
-            temperature=0.1, max_tokens=6000, json_mode=True,
+            temperature=0.1, max_tokens=None, json_mode=True,
         )
         return _parse_candidate_selection(raw, items)
     except Exception as error:
@@ -595,7 +595,7 @@ def _process_full_text_chunk(item, chunk, chunk_number, chunk_count, topics):
     try:
         raw = call_llm(
             build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics),
-            temperature=0.1, max_tokens=2000, json_mode=True,
+            temperature=0.1, max_tokens=None, json_mode=True,
         )
         return _parse_full_text_chunk(raw)
     except Exception as error:
@@ -603,7 +603,7 @@ def _process_full_text_chunk(item, chunk, chunk_number, chunk_count, topics):
         try:
             raw = call_llm(
                 build_full_text_chunk_prompt(item, chunk, chunk_number, chunk_count, topics),
-                temperature=0.0, max_tokens=2000, json_mode=True,
+                temperature=0.0, max_tokens=None, json_mode=True,
             )
             return _parse_full_text_chunk(raw)
         except Exception as retry_error:
@@ -716,7 +716,7 @@ def _process_snapshot_batch(items, topics=None, recency_days=7, split_depth=0, r
     try:
         raw = call_llm(
             build_snapshot_processing_prompt(items, topics, recency_days, reject=reject, user_profile=user_profile),
-            temperature=0.2, max_tokens=8000, json_mode=True,
+            temperature=0.2, max_tokens=None, json_mode=True,
         )
         return _parse_snapshot_processing(raw, items)
     except Exception as error:
@@ -731,7 +731,7 @@ def _process_snapshot_batch(items, topics=None, recency_days=7, split_depth=0, r
         try:
             raw = call_llm(
                 build_snapshot_processing_prompt(items, topics, recency_days, minimal=True, reject=reject, user_profile=user_profile),
-                temperature=0.1, max_tokens=2000, json_mode=True,
+                temperature=0.1, max_tokens=None, json_mode=True,
             )
             return _parse_snapshot_processing(raw, items)
         except Exception as retry_error:
@@ -808,7 +808,7 @@ def generate_source_summaries(items):
     for item in items:
         by_source.setdefault(item.get("source", "Unknown"), []).append(item)
     try:
-        summaries = parse_llm_json(call_llm(build_source_summary_prompt(by_source), temperature=0.4, max_tokens=6000, json_mode=True))
+        summaries = parse_llm_json(call_llm(build_source_summary_prompt(by_source), temperature=0.4, max_tokens=None, json_mode=True))
     except Exception as error:
         print(f"[LLM Error] 源总结生成失败：{error}")
         summaries = {}
