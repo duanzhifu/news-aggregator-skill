@@ -222,6 +222,7 @@ py scripts\push_to_obsidian.py --vault <信息流库根> --add-url <URL> [--note
 | `reject` | 主题拒绝词，注入 AI 准入与最终推荐 prompt | `llm_summarize.py` |
 | `daily_sources` | 定时任务默认来源（`--source`），当前 `juejin,devto,github,openai,bilibili` | `run_daily.py` → `--source` |
 | `limit_per_topic` | 动态搜索每主题条数（当前 5），经 `--dynamic-limit` 注入；CLI 显式传参优先 | `run_daily.py` → `--dynamic-limit` → `fetch_dynamic_search_news(limit_per_topic=)` |
+| `limit_per_source` | 每日定时任务每源抓取条数（当前 15），经 `--limit` 注入；CLI 显式传参优先 | `run_daily.py` → `--limit` → `push_to_obsidian(limit=)` |
 | `search_query_optimization` | 搜索词 LLM 消歧开关（默认 false，见上） | `push_to_obsidian.py` |
 | `block_url_patterns` | L0 零成本硬挡：匹配 URL **path** 的动态项（如 `/docs/`、`/tutorials/`），不进 LLM | `apply_zero_cost_rules` |
 | `block_hosts` | L0 零成本硬挡：匹配 hostname（精确或 `.host` 子域）的动态项（当前 8 条域名黑名单） | `apply_zero_cost_rules` |

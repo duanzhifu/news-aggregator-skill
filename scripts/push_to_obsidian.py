@@ -1803,12 +1803,13 @@ def summarize_daily(items):
     return source_summaries
 
 
-def push_to_obsidian(source_keys, vault_path, limit=15, deep=False, profile='tech', topics=None,
+def push_to_obsidian(source_keys, vault_path, limit=None, deep=False, profile='tech', topics=None,
                      recency_days=7, evidence_mode='snapshot', dynamic_limit=None):
     batch_tag = f"{TODAY}_{profile}"
     cfg = load_user_config()
     if cfg.get('daily_sources'):
         source_keys = cfg['daily_sources']
+    limit = limit or cfg.get('limit_per_source', 15)
     dynamic_limit = dynamic_limit or cfg.get('limit_per_topic', 3)
     optimize_dynamic = bool(cfg.get('search_query_optimization'))
     reject = cfg.get('reject') or []
@@ -2393,7 +2394,7 @@ def main():
     parser = argparse.ArgumentParser(description='推送新闻到 Obsidian')
     parser.add_argument('--source', default=','.join(DEFAULT_SOURCE_KEYS),
                         help='逗号分隔的源 key')
-    parser.add_argument('--limit', type=int, default=15, help='每源抓取条数')
+    parser.add_argument('--limit', type=int, default=None, help='每源抓取条数（默认读 user_interests.json limit_per_source）')
     parser.add_argument('--vault', help='Obsidian Vault 根目录')
     parser.add_argument('--deep', action='store_true',
                         help='兼容参数：仅对 AI 入选项拉取完整正文，等同 --evidence-mode full')

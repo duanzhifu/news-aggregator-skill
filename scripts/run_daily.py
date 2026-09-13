@@ -70,7 +70,7 @@ def main() -> int:
         env_note = "未找到浏览器 profile，将使用临时会话"
 
     # 读 user_interests.json 拼参数
-    source_arg, topics_arg, limit_arg = [], [], []
+    source_arg, topics_arg, limit_arg, source_limit_arg = [], [], [], []
     try:
         cfg = json.loads(
             (skill_root / "user_interests.json").read_text(encoding="utf-8")
@@ -81,6 +81,8 @@ def main() -> int:
             topics_arg = ["--topics", ",".join(cfg["topics"])]
         if cfg.get("limit_per_topic"):
             limit_arg = ["--dynamic-limit", str(cfg["limit_per_topic"])]
+        if cfg.get("limit_per_source"):
+            source_limit_arg = ["--limit", str(cfg["limit_per_source"])]
         print(f"[run_daily] Loaded topics: {topics_arg[1] if topics_arg else '(none)'}")
     except Exception as e:
         print(f"[run_daily] user_interests.json 解析失败: {e}", file=sys.stderr)
@@ -94,9 +96,9 @@ def main() -> int:
 
     log_line(f"run_daily.py start (vault={vault}, {env_note})")
 
-    cmd = [sys.executable, "-u", str(push_script), "--limit", "15",
+    cmd = [sys.executable, "-u", str(push_script),
            "--evidence-mode", "snapshot", "--vault", vault,
-           *source_arg, *topics_arg, *limit_arg]
+           *source_arg, *topics_arg, *limit_arg, *source_limit_arg]
     try:
         proc = subprocess.run(cmd, cwd=skill_root, capture_output=True, text=True, encoding="utf-8")
     except Exception as e:

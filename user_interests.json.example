@@ -57,6 +57,12 @@
     "修改方式：改数字；命令行 --dynamic-limit 显式传参会优先于这里的值。",
     "不填会怎样：使用内置默认 3（fetch_dynamic_search 与 push_to_obsidian 的兜底值）。"
   ],
+  "limit_per_source": 15,
+  "_limit_per_source说明": [
+    "【limit_per_source】每日定时任务每个固定源（RSS）最多抓多少条，可选（默认 15）。",
+    "修改方式：改数字；命令行 --limit 显式传参会优先于这里的值。",
+    "不填会怎样：使用内置默认 15（push_to_obsidian 的兜底值）。"
+  ],
   "search_query_optimization": false,
   "_search_query_optimization说明": [
     "【search_query_optimization】搜索词 LLM 消歧开关，可选（默认 false）。",

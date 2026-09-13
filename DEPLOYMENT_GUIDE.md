@@ -146,6 +146,7 @@ python scripts/push_to_obsidian.py `
 | 参数 | 作用 |
 | --- | --- |
 | `--topics` | 用于 AI 候选准入和最终质量判断的关注主题（默认读 `user_interests.json` 的 `topics`） |
+| `--limit` | 每源抓取条数；默认读 `user_interests.json` 的 `limit_per_source`，定时任务由 `run_daily.py` 自动注入 |
 | `--dynamic-limit` | 动态搜索每主题条数；默认读 `user_interests.json` 的 `limit_per_topic`，定时任务由 `run_daily.py` 自动注入 |
 | `--recency-days` | 提供给 AI 的近期优先参考天数；不是程序硬过滤窗口 |
 | `--profile` | 批次标签，供运行记录与后续扩展使用 |
