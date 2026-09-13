@@ -305,8 +305,17 @@ def _run_ffmpeg_frame(video_path, seconds, out_jpg):
 
 
 def _extract_frames(video_path, sections, frames_dir):
-    """按小节时间点抽帧，返回 {ts_str: 文件名}。文件名=mm-ss.jpg。失败的小节跳过。"""
+    """按小节时间点抽帧，返回 {ts_str: 文件名}。文件名=mm-ss.jpg。失败的小节跳过。
+
+    先清空目录已有 jpg：截图目录名已稳定（专题名），重跑必须覆盖不残留，否则旧帧成为孤儿。
+    """
     os.makedirs(frames_dir, exist_ok=True)
+    for old in os.listdir(frames_dir):
+        if old.lower().endswith(".jpg"):
+            try:
+                os.remove(os.path.join(frames_dir, old))
+            except OSError:
+                pass
     frames, seen = {}, set()
     for s in sections:
         ts = s.get("ts")
