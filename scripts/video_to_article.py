@@ -85,10 +85,27 @@ _SIMHASH_THRESHOLD = 8  # simhash 汉明距离 ≤ 8 判「内容高度重合」
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\r\n\t]')
 _SECTION_RE = re.compile(r'^##\s+(.+?)\s*（(\d{1,2}:\d{2}(?::\d{2})?)）\s*$')
 _POINTS_HEAD_RE = re.compile(r'^##\s*要点\s*$')
+# 课程系列编号前缀：01、XXX / 02.XXX / 03-XXX / 04 XXX / （05）XXX / 06_XXX 等
+# （编号后不紧跟数字，避免把 2026-09-14 这类日期文件名误判成编号 202）
+_SERIES_NO_RE = re.compile(r'^(?:[（(]\s*)?(\d{1,3})(?![0-9])\s*[、.．\-－_)]?\s*[、]?(?=\S)')
 
 
 def _sanitize_title(title):
     return _WIN_ILLEGAL.sub(" ", str(title)).strip()[:80]
+
+
+def _extract_series_no(target):
+    """从来源文件名解析课程编号前缀，返回编号字符串（如 '10'）；无编号返回 None。
+
+    匹配 01、XXX / 02.XXX / 03-XXX / 04 XXX / （05）XXX 等常见系列命名。
+    编号只用于文件名/截图目录前缀与 frontmatter 序号，不改文章内容标题。
+    """
+    name = os.path.basename(str(target))
+    base = os.path.splitext(name)[0]
+    m = _SERIES_NO_RE.match(base)
+    if m:
+        return m.group(1)
+    return None
 
 
 def _yaml_str(value):
@@ -747,14 +764,16 @@ def _find_semantic_duplicates(index, topic, simhash_val):
 
 # -------------------- 落盘 --------------------
 
-def _write_article(topic_dir, article, title, source_label, method, today, topic, dup_warning=None):
+def _write_article(topic_dir, article, title, source_label, method, today, topic, dup_warning=None, series_no=None):
     os.makedirs(topic_dir, exist_ok=True)
-    fname = f"{today} - {_sanitize_title(title)}.md"
+    prefix = f"{series_no}、" if series_no else ""
+    fname = f"{today} - {prefix}{_sanitize_title(title)}.md"
     path = os.path.join(topic_dir, fname)
     front = (
         "---\n"
         f'标题: {_yaml_str(title)}\n'
-        f'专题: {_yaml_str(topic)}\n'
+        + (f'序号: {_yaml_str(series_no)}\n' if series_no else "")
+        + f'专题: {_yaml_str(topic)}\n'
         f'来源: {_yaml_str(source_label)}\n'
         f'转录方式: {_yaml_str(method)}\n'
         f'整理日期: {_yaml_str(today)}\n'
@@ -822,13 +841,15 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     if not article or not article.strip():
         raise RuntimeError("LLM 未返回文章内容")
     title = _extract_title(article)
+    series_no = _extract_series_no(target)
     _, sections, points = _parse_article(article)
 
-    # 截图：仅本地文件，且有时间点。目录名用稳定专题名（非 AI 标题），同视频重跑写同一目录天然覆盖
+    # 截图：仅本地文件，且有时间点。目录名=文章名（含编号前缀，每篇唯一），批量不踩踏、单文件重跑由 force 清理兜底
     topic_dir = os.path.join(out_root, _sanitize_title(topic))
     frames = {}
     if do_frames and os.path.isfile(target) and has_ts:
-        subdir = f"{today} - {_sanitize_title(topic)}截图"
+        prefix = f"{series_no}、" if series_no else ""
+        subdir = f"{today} - {prefix}{_sanitize_title(title)}截图"
         frames_dir = os.path.join(topic_dir, "附录", subdir)
         frames = _extract_frames(target, sections, frames_dir)
         if frames:
@@ -846,7 +867,7 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     callout = _build_transcript_callout(segments, transcript, has_ts)
     final = _assemble_article(article, mindmap, outline, callout)
 
-    path = _write_article(topic_dir, final, title, target, method, today, topic, dup_warning)
+    path = _write_article(topic_dir, final, title, target, method, today, topic, dup_warning, series_no)
     print(f"  [落盘] {path}", file=sys.stderr)
 
     # ③ 写处理索引（成功才记录；force 重跑时覆盖旧记录）
