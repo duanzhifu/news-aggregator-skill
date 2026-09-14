@@ -771,10 +771,24 @@ def _find_semantic_duplicates(index, topic, simhash_val, exclude_key=None):
 
 # -------------------- 落盘 --------------------
 
-def _write_article(topic_dir, article, title, source_label, method, today, topic, dup_warning=None, series_no=None):
+def _unique_fname(topic_dir, base):
+    """返回不冲突的文章文件名：base.md 已存在（同专题同标题 AI 产物）则依次尝试 base-2.md、base-3.md…。
+
+    防「无编号 + AI 标题相同 → 后写覆盖先写」静默丢内容；有编号系列前缀已保证唯一，走直返分支。
+    """
+    fname = base + ".md"
+    n = 2
+    while os.path.exists(os.path.join(topic_dir, fname)):
+        fname = f"{base}-{n}.md"
+        n += 1
+    return fname
+
+
+def _write_article(topic_dir, article, title, source_label, method, today, topic, dup_warning=None, series_no=None, fname=None):
     os.makedirs(topic_dir, exist_ok=True)
-    prefix = f"{series_no}、" if series_no else ""
-    fname = f"{today} - {prefix}{_sanitize_title(title)}.md"
+    if fname is None:
+        prefix = f"{series_no}、" if series_no else ""
+        fname = f"{today} - {prefix}{_sanitize_title(title)}.md"
     path = os.path.join(topic_dir, fname)
     front = (
         "---\n"
@@ -856,9 +870,12 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     # 截图：仅本地文件，且有时间点。目录名=文章名（含编号前缀，每篇唯一），批量不踩踏、单文件重跑由 force 清理兜底
     topic_dir = os.path.join(out_root, _sanitize_title(topic))
     frames = {}
+    # 文件名唯一化：同专题同标题 AI 产物加 -2/-3 后缀，避免后写覆盖先写；截图目录名从唯一名派生，避免共享目录互相清帧
+    prefix = f"{series_no}、" if series_no else ""
+    fname_base = f"{today} - {prefix}{_sanitize_title(title)}"
+    unique_fname = _unique_fname(topic_dir, fname_base)
     if do_frames and os.path.isfile(target) and has_ts:
-        prefix = f"{series_no}、" if series_no else ""
-        subdir = f"{today} - {prefix}{_sanitize_title(title)}截图"
+        subdir = unique_fname[:-3] + "截图"
         frames_dir = os.path.join(topic_dir, "附录", subdir)
         frames = _extract_frames(target, sections, frames_dir)
         if frames:
@@ -876,7 +893,7 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     callout = _build_transcript_callout(segments, transcript, has_ts)
     final = _assemble_article(article, mindmap, outline, callout)
 
-    path = _write_article(topic_dir, final, title, target, method, today, topic, dup_warning, series_no)
+    path = _write_article(topic_dir, final, title, target, method, today, topic, dup_warning, series_no, fname=unique_fname)
     print(f"  [落盘] {path}", file=sys.stderr)
 
     # ③ 写处理索引（成功才记录；force 重跑时覆盖旧记录；key 已在开头算好）

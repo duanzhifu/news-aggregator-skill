@@ -8,13 +8,13 @@ try:
     from video_to_article import (
         _normalize_url, _fingerprint_key, _load_index, _save_index,
         _find_exact_duplicate, _simhash, _hamming, _find_semantic_duplicates,
-        INDEX_PATH,
+        _unique_fname, INDEX_PATH,
     )
 except ModuleNotFoundError:  # PYTHONPATH 未含 scripts/ 时走包路径
     from scripts.video_to_article import (
         _normalize_url, _fingerprint_key, _load_index, _save_index,
         _find_exact_duplicate, _simhash, _hamming, _find_semantic_duplicates,
-        INDEX_PATH,
+        _unique_fname, INDEX_PATH,
     )
 
 
@@ -124,6 +124,25 @@ class TestFindExactDuplicate(unittest.TestCase):
         m.INDEX_PATH = self.tmp.name
         _save_index({"records": {}})
         self.assertIsNone(_find_exact_duplicate("https://example.com/other", "t", self.tmp.name, "2026-09-02"))
+
+
+class TestUniqueFname(unittest.TestCase):
+    """_unique_fname：同专题同标题碰撞时自动加 -2/-3 后缀，防静默覆盖。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_no_conflict_returns_base(self):
+        self.assertEqual(_unique_fname(self.tmp, "2026-09-14 - 视频标题"), "2026-09-14 - 视频标题.md")
+
+    def test_conflict_appends_suffix(self):
+        for name in ("2026-09-14 - 视频标题.md", "2026-09-14 - 视频标题-2.md"):
+            open(os.path.join(self.tmp, name), "w").close()
+        self.assertEqual(_unique_fname(self.tmp, "2026-09-14 - 视频标题"), "2026-09-14 - 视频标题-3.md")
 
 
 class TestFindSemanticDuplicates(unittest.TestCase):
