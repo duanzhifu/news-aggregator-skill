@@ -62,6 +62,25 @@ class TestSimhash(unittest.TestCase):
     def test_short_text(self):
         self.assertEqual(_simhash("哈"), _simhash("哈"))
 
+    def test_long_transcripts_same_video_repeat_near(self):
+        """长转录真实场景：同一视频二次转写（ASR 抖动，个别字不同），距离 ≤ 阈值，应命中。
+
+        实测距离 7≤8：文本约 660 字、仅「希望→期望」差异。短文本用例不覆盖此类长文本行为。
+        """
+        base = "这个就是 Harness 解决的 Agent 开发常见问题，希望一句话搞定所有事情，上下文被撑爆写一堆半成品。"
+        a = ("重新转写同一段视频的转录文本" + base) * 18
+        b = ("重新转写同一段视频的转录文本" + base.replace("希望", "期望")) * 18
+        self.assertLessEqual(_hamming(_simhash(a), _simhash(b)), _SIMHASH_THRESHOLD_LOCAL())
+
+    def test_long_transcripts_different_topics_far(self):
+        """长转录真实场景：两个主题完全无关的视频，距离必须大于阈值（防长文本特征密集误判）。
+
+        实测距离 40≫8：长文本 simhash 仍能区分无关内容，固化该能力防回归。
+        """
+        a = "量子计算与人工智能的前沿技术" + "量子比特叠加态纠缠量子纠错表面码逻辑量子比特门操作保真度" * 20
+        b = "今天的天气真好" + "早餐吃什么午饭晚饭家常菜谱番茄炒蛋红烧肉清蒸鱼" * 20
+        self.assertGreater(_hamming(_simhash(a), _simhash(b)), _SIMHASH_THRESHOLD_LOCAL())
+
 
 def _SIMHASH_THRESHOLD_LOCAL():
     try:
