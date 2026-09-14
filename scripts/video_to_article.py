@@ -324,7 +324,7 @@ def _run_ffmpeg_frame(video_path, seconds, out_jpg):
 def _extract_frames(video_path, sections, frames_dir):
     """按小节时间点抽帧，返回 {ts_str: 文件名}。文件名=mm-ss.jpg。失败的小节跳过。
 
-    先清空目录已有 jpg：截图目录名已稳定（专题名），重跑必须覆盖不残留，否则旧帧成为孤儿。
+    先清空目录已有 jpg：截图目录名=文章名（每篇唯一，见 _process_one），重跑必须覆盖不残留，否则旧帧成为孤儿。
     """
     os.makedirs(frames_dir, exist_ok=True)
     for old in os.listdir(frames_dir):
@@ -854,7 +854,7 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
         dup_warning = (
             "> [!warning] 内容重合提示\n"
             f"> 本视频转录与《{rec.get('title', '?')}》高度重合"
-            f"（相似度 hamming={dist}，产物：{rec.get('output_md', '?')}，{rec.get('processed_at', '?')}）。"
+            f"（汉明距离 {dist}（64 位指纹中 {dist} 位不同），产物：{rec.get('output_md', '?')}，{rec.get('processed_at', '?')}）。"
             "如确认是同一课程的不同来源，请删除本篇重复内容。\n"
         )
         print(f"  [去重] ⚠ 与已生成文章高度重合：{rec.get('output_md', '?')}", file=sys.stderr)
