@@ -7,14 +7,14 @@ import unittest
 try:
     from video_to_article import (
         _normalize_url, _fingerprint_key, _load_index, _save_index,
-        _find_exact_duplicate, _simhash, _hamming, _find_semantic_duplicates,
-        _unique_fname, INDEX_PATH,
+        _find_exact_duplicate, _simhash, _simhash_transcript, _hamming,
+        _find_semantic_duplicates, _unique_fname, INDEX_PATH,
     )
 except ModuleNotFoundError:  # PYTHONPATH 未含 scripts/ 时走包路径
     from scripts.video_to_article import (
         _normalize_url, _fingerprint_key, _load_index, _save_index,
-        _find_exact_duplicate, _simhash, _hamming, _find_semantic_duplicates,
-        _unique_fname, INDEX_PATH,
+        _find_exact_duplicate, _simhash, _simhash_transcript, _hamming,
+        _find_semantic_duplicates, _unique_fname, INDEX_PATH,
     )
 
 
@@ -80,6 +80,28 @@ class TestSimhash(unittest.TestCase):
         a = "量子计算与人工智能的前沿技术" + "量子比特叠加态纠缠量子纠错表面码逻辑量子比特门操作保真度" * 20
         b = "今天的天气真好" + "早餐吃什么午饭晚饭家常菜谱番茄炒蛋红烧肉清蒸鱼" * 20
         self.assertGreater(_hamming(_simhash(a), _simhash(b)), _SIMHASH_THRESHOLD_LOCAL())
+
+    def test_simhash_transcript_ignores_timestamps(self):
+        """_simhash_transcript：时间戳前缀不影响指纹——同一内容不同时间戳 → 相同 simhash。"""
+        a = "[00:00] 这是第一句话\n[00:05] 这是第二句话\n[01:23] 这是第三句话"
+        b = "[03:45] 这是第一句话\n[02:11] 这是第二句话\n[04:56] 这是第三句话"
+        self.assertEqual(_simhash_transcript(a), _simhash_transcript(b))
+        # 直接 _simhash 则时间戳参与特征 → 两个指纹不同，证明剥离确实生效
+        self.assertNotEqual(_simhash(a), _simhash(b))
+
+    def test_timestamp_noise_pulls_fingerprints_together(self):
+        """实测根因：时间戳 trigram 被所有视频共享，把「内容相近」的视频对指纹拉近。
+
+        同课程模拟（共享句 + 各自特有细节）实测 带时间戳 16 → 去时间戳 20，方向与
+        真实数据一致（Harness 01vs06: 8→23、02vs15: 8→25、10vs14: 7→23）。
+        """
+        shared = "本课程介绍 Harness Engineering 企业级应用实战中的工程实践与常见问题，"
+        a = "\n".join(f"[{m:02d}:{s:02d}] " + shared + "上下文工程与角色分工的细节" for m in range(8) for s in (0, 33))
+        b = "\n".join(f"[{m:02d}:{s:02d}] " + shared + "持久化记忆与结构化执行的细节" for m in range(8) for s in (0, 33))
+        d_ts = _hamming(_simhash(a), _simhash(b))
+        d_plain = _hamming(_simhash_transcript(a), _simhash_transcript(b))
+        self.assertGreater(d_plain, d_ts)                    # 剥离时间戳后距离拉大
+        self.assertGreater(d_plain, _SIMHASH_THRESHOLD_LOCAL())  # 剥离后不命中
 
 
 def _SIMHASH_THRESHOLD_LOCAL():

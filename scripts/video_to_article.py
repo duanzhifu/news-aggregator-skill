@@ -743,6 +743,19 @@ def _simhash(text, bits=_SIMHASH_BITS):
     return out
 
 
+_TS_PREFIX_RE = re.compile(r"\[\d{1,2}:\d{2}(?::\d{2})?\]\s*")
+
+
+def _simhash_transcript(transcript, bits=_SIMHASH_BITS):
+    """转录文本的 simhash：先剥离每行 [mm:ss] 时间戳前缀再计算。
+
+    时间戳 trigram（[00、00]、0]、:0 等）被所有视频 100% 共享，会把任意两个
+    视频的指纹整体拉近约 10+ 位，导致同课程系列跨集虚假「高度重合」（实测
+    01vs06: 8→23、02vs15: 8→25、10vs14: 7→23，剥离后全部不命中）。
+    """
+    return _simhash(_TS_PREFIX_RE.sub("", transcript or ""), bits)
+
+
 def _hamming(a, b):
     return bin(a ^ b).count("1")
 
@@ -846,9 +859,9 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
             raise RuntimeError("无法获得转录文本（字幕 API 与 Groq whisper 均失败，或音频超 25MB）")
     print(f"  [转录] 成功（{method}，{len(transcript)} 字，时间点={'有' if has_ts else '无'}）", file=sys.stderr)
 
-    # ② 语义近似查重（同专题内 simhash，只提示不阻断；exclude_key 排除同一视频自身记录，force 重跑不自指）
+    # ② 语义近似查重（同专题内 simhash，只提示不阻断；exclude_key 排除同一视频自身记录；剥离时间戳前缀防跨集误报）
     dup_warning = None
-    sem = _find_semantic_duplicates(_load_index(), topic, _simhash(transcript), exclude_key=key)
+    sem = _find_semantic_duplicates(_load_index(), topic, _simhash_transcript(transcript), exclude_key=key)
     if sem:
         dist, rec = sem[0]
         dup_warning = (
@@ -905,7 +918,7 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
             "title": title,
             "output_md": path,
             "processed_at": today,
-            "simhash": f"{_simhash(transcript):016x}",
+            "simhash": f"{_simhash_transcript(transcript):016x}",
         }
         _save_index(idx)
     return path
