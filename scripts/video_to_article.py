@@ -108,6 +108,25 @@ def _extract_series_no(target):
     return None
 
 
+def _extract_source_title(target):
+    """从来源文件名解析系列标题：剥系列编号、扩展名、下载残留（bvid 尾巴）与尾缀连字符。
+
+    返回清洗后的标题；无法解析（URL / 纯编号 / 解析后为空）返回空串，由调用方回退 AI 标题。
+    清洗规则已对真实批量文件名 46/46 仿真验证（含 01、xx-a689cf383fb2.mp4、xx -.mp4、
+    内部连字符阶段名如 21、阶段1信息层-让Agent看懂项目.mp4 正确保留）。
+    """
+    if not os.path.isfile(target):
+        return ""
+    base = os.path.splitext(os.path.basename(str(target)))[0]
+    base = _SERIES_NO_RE.sub("", base)            # 剥系列编号前缀（复用同一正则）
+    base = re.sub(r"-[a-f0-9]{12,}$", "", base)   # bvid 下载残留
+    base = re.sub(r"\s*[-－]\s*$", "", base)      # 尾缀 " -" / " -"
+    out = base.strip()
+    if not out or re.fullmatch(r"[\d\s\-－_]+", out):  # 纯编号/符号无标题信息 → 空（AI 兜底）
+        return ""
+    return out
+
+
 def _yaml_str(value):
     """把任意字符串变成合法 YAML 双引号标量（JSON 转义，正确处理反斜杠/引号/换行）。"""
     return json.dumps(str(value), ensure_ascii=False)
@@ -280,6 +299,14 @@ def _extract_title(article):
     if m:
         return m.group(1).strip()
     return "未命名视频文章"
+
+
+def _retitle_article(article, title):
+    """把文章正文首个 `# ` 标题替换为给定标题，使文件名 / frontmatter / 正文标题三处一致。
+
+    标题来源切到源文件名后，正文 AI 拟的 `# ` 标题会与 frontmatter 不一致，这里统一。
+    """
+    return re.sub(r"^# .+", f"# {title}", article or "", count=1, flags=re.M)
 
 
 def _parse_article(article):
@@ -876,7 +903,9 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     article = _generate_article(transcript, target, has_ts)
     if not article or not article.strip():
         raise RuntimeError("LLM 未返回文章内容")
-    title = _extract_title(article)
+    # 标题优先取来源文件名（用户命名即标题）；URL/无标题信息时回退 AI 标题；正文 # 标题同步统一
+    title = _extract_source_title(target) or _extract_title(article)
+    article = _retitle_article(article, title)
     series_no = _extract_series_no(target)
     _, sections, points = _parse_article(article)
 

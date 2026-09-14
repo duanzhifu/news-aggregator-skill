@@ -8,13 +8,15 @@ try:
     from video_to_article import (
         _normalize_url, _fingerprint_key, _load_index, _save_index,
         _find_exact_duplicate, _simhash, _simhash_transcript, _hamming,
-        _find_semantic_duplicates, _unique_fname, INDEX_PATH,
+        _find_semantic_duplicates, _unique_fname, _extract_source_title,
+        _retitle_article, INDEX_PATH,
     )
 except ModuleNotFoundError:  # PYTHONPATH 未含 scripts/ 时走包路径
     from scripts.video_to_article import (
         _normalize_url, _fingerprint_key, _load_index, _save_index,
         _find_exact_duplicate, _simhash, _simhash_transcript, _hamming,
-        _find_semantic_duplicates, _unique_fname, INDEX_PATH,
+        _find_semantic_duplicates, _unique_fname, _extract_source_title,
+        _retitle_article, INDEX_PATH,
     )
 
 
@@ -223,6 +225,57 @@ class TestFindSemanticDuplicates(unittest.TestCase):
         titles = [r["title"] for _, r in hits]
         self.assertNotIn("自己", titles)
         self.assertIn("双生兄弟", titles)
+
+
+class TestExtractSourceTitle(unittest.TestCase):
+    """_extract_source_title：标题取来源文件名，清洗编号/bvid 尾巴/尾缀连字符；无法解析返回空。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _mk(self, name):
+        p = os.path.join(self.tmp, name)
+        open(p, "w").close()
+        return p
+
+    def test_series_no_and_trailing_dash(self):
+        self.assertEqual(_extract_source_title(self._mk("13、Harness 熵管理 -.mp4")), "Harness 熵管理")
+
+    def test_bvid_residue(self):
+        self.assertEqual(_extract_source_title(self._mk("01、Harness 课程介绍-a689cf383fb2.mp4")), "Harness 课程介绍")
+
+    def test_no_series_no(self):
+        self.assertEqual(_extract_source_title(self._mk("OpenAI 驾驭工程实践案例.mp4")), "OpenAI 驾驭工程实践案例")
+
+    def test_inner_dash_preserved(self):
+        self.assertEqual(_extract_source_title(self._mk("21、阶段1信息层-让Agent看懂项目.mp4")), "阶段1信息层-让Agent看懂项目")
+
+    def test_pure_number_returns_empty(self):
+        self.assertEqual(_extract_source_title(self._mk("12.mp4")), "")
+
+    def test_url_returns_empty(self):
+        self.assertEqual(_extract_source_title("https://www.bilibili.com/video/BV1xx"), "")
+
+    def test_missing_file_returns_empty(self):
+        self.assertEqual(_extract_source_title(os.path.join(self.tmp, "不存在.mp4")), "")
+
+
+class TestRetitleArticle(unittest.TestCase):
+    """_retitle_article：正文首个 # 标题替换为统一标题（文件名/frontmatter/正文三处一致）。"""
+
+    def test_replaces_first_h1(self):
+        article = "# AI 拟的旧标题\n\n> 摘要\n\n## 一、小节"
+        out = _retitle_article(article, "源文件名标题")
+        self.assertTrue(out.startswith("# 源文件名标题\n"))
+        self.assertNotIn("AI 拟的旧标题", out.split("\n")[0])
+
+    def test_no_h1_unchanged(self):
+        article = "> 摘要\n\n## 一、小节"
+        self.assertEqual(_retitle_article(article, "标题"), article)
 
 
 if __name__ == "__main__":
