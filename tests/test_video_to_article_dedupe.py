@@ -148,6 +148,22 @@ class TestFindSemanticDuplicates(unittest.TestCase):
         hits = _find_semantic_duplicates(index, "Ai课程", _simhash("任意文本"))
         self.assertEqual(hits, [])
 
+    def test_exclude_self_key(self):
+        """force 重跑场景：索引残留自身旧记录（同 key），exclude_key 排除后不自指命中。
+
+        同时验证：其他记录（同 key 不同指纹键、但 simhash 相同）仍正常命中。
+        """
+        text = "这是一段关于机器学习模型的视频转录文本"
+        h = f"{_simhash(text):016x}"
+        index = {"records": {
+            "k_self": self._rec("Ai课程", h, title="自己"),
+            "k_twin": self._rec("Ai课程", h, title="双生兄弟"),
+        }}
+        hits = _find_semantic_duplicates(index, "Ai课程", _simhash(text), exclude_key="k_self")
+        titles = [r["title"] for _, r in hits]
+        self.assertNotIn("自己", titles)
+        self.assertIn("双生兄弟", titles)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -689,13 +689,14 @@ def _save_index(index):
         print(f"  [索引] 写失败：{e}", file=sys.stderr)
 
 
-def _find_exact_duplicate(target, topic, out_root, today):
+def _find_exact_duplicate(target, topic, out_root, today, key=None):
     """精确指纹查重（双重）：① processed_index.json 记录；② 扫描专题目录下文章 frontmatter 的来源兜底。
 
     崩溃残留（索引未写但文章/截图已落盘）时，靠 ② 也能命中，避免同一视频重复生成。
-    命中返回 dict（含 output_md），未命中返回 None。
+    命中返回 dict（含 output_md），未命中返回 None。key 传入复用已算好的指纹键（省子进程）。
     """
-    key = _fingerprint_key(target)
+    if key is None:
+        key = _fingerprint_key(target)
     if key:
         rec = _load_index().get("records", {}).get(key)
         if isinstance(rec, dict):
@@ -746,10 +747,16 @@ def _hamming(a, b):
     return bin(a ^ b).count("1")
 
 
-def _find_semantic_duplicates(index, topic, simhash_val):
-    """同专题内 simhash 近似查重，返回 [(hamming距离, 记录)]，按距离升序。"""
+def _find_semantic_duplicates(index, topic, simhash_val, exclude_key=None):
+    """同专题内 simhash 近似查重，返回 [(hamming距离, 记录)]，按距离升序。
+
+    exclude_key：指纹键（local:size:dur:hash / url:...）。同一视频自身的记录
+    （含 force 重跑时索引里残留的旧记录）跳过，避免「与自身高度重合」自指警告。
+    """
     hits = []
-    for rec in index.get("records", {}).values():
+    for key, rec in index.get("records", {}).items():
+        if exclude_key is not None and key == exclude_key:
+            continue
         if rec.get("topic") != topic:
             continue
         rsh = rec.get("simhash")
@@ -790,8 +797,10 @@ def _write_article(topic_dir, article, title, source_label, method, today, topic
 
 def _process_one(target, topic, out_root, do_frames, today, force=False):
     """处理单个视频，返回输出文件路径；精确查重命中（非 force）返回 None（跳过）；致命失败抛异常。"""
+    # 指纹键（ffprobe+ffmpeg 首帧哈希是子进程，全流程只算一次）：精确查重 / 语义查重排除自身 / 写索引三处复用
+    key = _fingerprint_key(target)
     # ① 精确指纹查重（索引 + 磁盘双重；同一视频重复生成拦截）
-    dup = _find_exact_duplicate(target, topic, out_root, today)
+    dup = _find_exact_duplicate(target, topic, out_root, today, key=key)
     if dup and not force:
         print(f"  [去重] 已处理过：{dup.get('output_md', '?')}（{dup.get('processed_at', '?')}），跳过。--force 可重跑。",
               file=sys.stderr)
@@ -823,9 +832,9 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
             raise RuntimeError("无法获得转录文本（字幕 API 与 Groq whisper 均失败，或音频超 25MB）")
     print(f"  [转录] 成功（{method}，{len(transcript)} 字，时间点={'有' if has_ts else '无'}）", file=sys.stderr)
 
-    # ② 语义近似查重（同专题内 simhash，只提示不阻断）
+    # ② 语义近似查重（同专题内 simhash，只提示不阻断；exclude_key 排除同一视频自身记录，force 重跑不自指）
     dup_warning = None
-    sem = _find_semantic_duplicates(_load_index(), topic, _simhash(transcript))
+    sem = _find_semantic_duplicates(_load_index(), topic, _simhash(transcript), exclude_key=key)
     if sem:
         dist, rec = sem[0]
         dup_warning = (
@@ -870,8 +879,7 @@ def _process_one(target, topic, out_root, do_frames, today, force=False):
     path = _write_article(topic_dir, final, title, target, method, today, topic, dup_warning, series_no)
     print(f"  [落盘] {path}", file=sys.stderr)
 
-    # ③ 写处理索引（成功才记录；force 重跑时覆盖旧记录）
-    key = _fingerprint_key(target)
+    # ③ 写处理索引（成功才记录；force 重跑时覆盖旧记录；key 已在开头算好）
     if key:
         idx = _load_index()
         idx.setdefault("records", {})[key] = {
