@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from scripts import social_platforms
@@ -326,6 +327,107 @@ class BilibiliPubtimeTests(unittest.TestCase):
 
     def test_pubtime_returns_empty_without_bvid(self):
         self.assertEqual("", fetch_social_browser._bilibili_pubtime("https://www.bilibili.com/cheese/play/ep123"))
+
+
+class BiliApiSearchTests(unittest.TestCase):
+    """_bilibili_api_search：B站官方搜索 API 直连解析（2026-09-15 发现层改造）。"""
+
+    _VIDEO_ITEM = {
+        "type": "video",
+        "bvid": "BV1SzYk6HE4B",
+        "title": '<em class="keyword">DeepSeek</em> Harness 紧急漏洞',
+        "author": "网络小白_Uncle城",
+        "play": 80271,
+        "like": 11537,
+        "review": 243,
+        "favorites": 6251,
+        "pubdate": 1789378717,
+        "description": "漏洞复现演示",
+        "arcurl": "http://www.bilibili.com/video/av117268679757898",
+    }
+
+    def _payload(self, *groups):
+        return {"code": 0, "data": {"result": list(groups)}}
+
+    def _video_group(self, items=None):
+        return {"result_type": "video", "data": items or [self._VIDEO_ITEM]}
+
+    def _mock_ok(self, payload):
+        fake = type("R", (), {"raise_for_status": lambda self: None, "json": lambda self: payload})()
+        return patch.object(social_platforms.requests, "get", return_value=fake)
+
+    def test_strip_html_removes_keyword_highlight(self):
+        self.assertEqual(
+            "DeepSeek Harness 紧急漏洞",
+            social_platforms._strip_html('<em class="keyword">DeepSeek</em> Harness 紧急漏洞'),
+        )
+        self.assertEqual("A & B", social_platforms._strip_html("A &amp; B"))
+
+    def test_api_search_maps_fields(self):
+        with self._mock_ok(self._payload(self._video_group())):
+            rows = social_platforms._bilibili_api_search("deepseek harness", 5)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["title"], "DeepSeek Harness 紧急漏洞")
+        self.assertEqual(row["url"], "https://www.bilibili.com/video/BV1SzYk6HE4B")
+        self.assertEqual(row["author"], "网络小白_Uncle城")
+        self.assertEqual(row["heat"], "80271")
+        self.assertEqual(row["platform_id"], "BV1SzYk6HE4B")
+        self.assertEqual(row["fetch_method"], "bilibili_api")
+        self.assertEqual(row["view"], 80271)
+        self.assertEqual(row["comment"], 243)
+        self.assertIn("T", row["time"])
+
+    def test_api_search_time_parses_as_iso(self):
+        with self._mock_ok(self._payload(self._video_group())):
+            rows = social_platforms._bilibili_api_search("x", 1)
+        parsed = datetime.fromisoformat(rows[0]["time"])
+        self.assertEqual(parsed.year, 2026)
+
+    def test_api_search_url_passes_allowed_social_url(self):
+        with self._mock_ok(self._payload(self._video_group())):
+            rows = social_platforms._bilibili_api_search("x", 1)
+        self.assertTrue(social_platforms.allowed_social_url("bilibili", rows[0]["url"]))
+
+    def test_api_search_skips_non_video_groups(self):
+        payload = self._payload(
+            {"result_type": "bili_user", "data": [{"title": "UP主", "url": "https://space.bilibili.com/1"}]},
+            self._video_group(),
+        )
+        with self._mock_ok(payload):
+            rows = social_platforms._bilibili_api_search("x", 5)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["platform_id"], "BV1SzYk6HE4B")
+
+    def test_api_search_respects_limit(self):
+        items = [dict(self._VIDEO_ITEM, bvid=f"BV1{a:02d}xxxx", title=f"title{a}") for a in range(5)]
+        with self._mock_ok(self._payload(self._video_group(items))):
+            rows = social_platforms._bilibili_api_search("x", 2)
+        self.assertEqual(len(rows), 2)
+
+    def test_api_search_returns_empty_when_code_not_zero(self):
+        with self._mock_ok({"code": -412, "data": {}}):
+            self.assertEqual([], social_platforms._bilibili_api_search("x", 5))
+
+    def test_api_search_returns_empty_on_request_error(self):
+        with patch.object(social_platforms.requests, "get", side_effect=OSError("network")):
+            self.assertEqual([], social_platforms._bilibili_api_search("x", 5))
+
+    def test_fetch_social_falls_back_to_browser_when_api_empty(self):
+        api_rows, browser_rows = [], [{"title": "b", "url": "https://www.bilibili.com/video/BV1xxx"}]
+        with patch.object(social_platforms, "_bilibili_api_search", return_value=api_rows) as mock_api, \
+                patch.object(social_platforms, "browser_search", return_value=browser_rows) as mock_browser:
+            social_platforms.fetch_social("bilibili", "Bilibili", limit=5, keyword="deepseek harness")
+            mock_api.assert_called_once()
+            mock_browser.assert_called_once()
+
+    def test_fetch_social_uses_api_before_browser(self):
+        api_rows = [dict(self._VIDEO_ITEM, url="https://www.bilibili.com/video/BV1SzYk6HE4B")]
+        with patch.object(social_platforms, "_bilibili_api_search", return_value=api_rows) as mock_api, \
+                patch.object(social_platforms, "browser_search") as mock_browser:
+            social_platforms.fetch_social("bilibili", "Bilibili", limit=5, keyword="deepseek harness")
+            mock_api.assert_called_once()
+            mock_browser.assert_not_called()
 
 
 class _FakeResp:

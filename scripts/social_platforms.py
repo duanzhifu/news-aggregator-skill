@@ -1,8 +1,11 @@
 """Adapters for public Douyin and Bilibili content discovery."""
+import html
 import json
 import os
+import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -242,6 +245,66 @@ def configured_api_search(platform, source, query, limit):
         return []
 
 
+_BILI_SEARCH_API = "https://api.bilibili.com/x/web-interface/search/all/v2"
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text):
+    """B站标题关键词高亮标签剥离（<em class="keyword">X</em> → X）。"""
+    return html.unescape(_HTML_TAG_RE.sub("", text)).strip()
+
+
+def _bilibili_api_search(query, limit):
+    """B站官方搜索 API 直连（无签名/无登录）。失败或异常返回 []，由上层回退浏览器。
+
+    /x/web-interface/search/all/v2 无签名可调（2026-09 实测 code 0，42 条 video）；
+    标题带 <em class="keyword"> 高亮需剥离；pubdate 为 Unix 秒需转 ISO。
+    """
+    if not query:
+        return []
+    url = f"{_BILI_SEARCH_API}?keyword={quote(str(query), safe='')}&page=1"
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as error:
+        print(f"bilibili API search failed: {error}", file=sys.stderr)
+        return []
+    if payload.get("code") != 0:
+        print(f"bilibili API search rejected: code={payload.get('code')}", file=sys.stderr)
+        return []
+    rows = []
+    for group in payload.get("data", {}).get("result") or []:
+        if group.get("result_type") != "video":
+            continue
+        for item in (group.get("data") or [])[:limit]:
+            bvid = str(item.get("bvid") or "").strip()
+            title = _strip_html(str(item.get("title") or ""))
+            if not bvid or not title:
+                continue
+            pubdate = item.get("pubdate")
+            time_text = ""
+            if isinstance(pubdate, (int, float)) and pubdate > 0:
+                time_text = datetime.fromtimestamp(pubdate).astimezone().isoformat(timespec="seconds")
+            play = item.get("play")
+            rows.append({
+                "title": title,
+                "url": f"https://www.bilibili.com/video/{bvid}",
+                "time": time_text,
+                "summary": str(item.get("description") or ""),
+                "heat": str(play) if isinstance(play, (int, float)) else "",
+                "author": str(item.get("author") or ""),
+                "platform_id": bvid,
+                "fetch_method": "bilibili_api",
+                "view": play,
+                "like": item.get("like"),
+                "comment": item.get("review"),
+                "favorites": item.get("favorites"),
+            })
+        break
+    return rows
+
+
 def fetch_social(platform, source, limit=5, keyword=None):
     if not keyword and source_key(platform) == "bilibili":
         env_topics = os.environ.get("NEWS_AGGREGATOR_TOPICS", "").strip()
@@ -255,7 +318,14 @@ def fetch_social(platform, source, limit=5, keyword=None):
     max_queries = max(1, int(os.environ.get("SOCIAL_MAX_QUERIES", "15")))
     for value in keywords[:max_queries]:
         api_rows = configured_api_search(platform, source, value, per_query)
-        rows.extend(api_rows or browser_search(platform, value, per_query))
+        if api_rows:
+            rows.extend(api_rows)
+            continue
+        if source_key(platform) == "bilibili":
+            # API 直连优先（快一个量级、元数据完整）；失败回退浏览器抓页
+            rows.extend(_bilibili_api_search(value, per_query) or browser_search(platform, value, per_query))
+        else:
+            rows.extend(browser_search(platform, value, per_query))
     return normalize_rows(rows, source, keyword, limit)
 
 
