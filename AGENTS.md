@@ -21,7 +21,7 @@ playwright install chromium
 
 ## 测试规范
 
-当前使用 `py -m unittest`（188 个用例，见 CLAUDE.md）。使用受限的在线抓取（`--limit 1` 或 `--limit 3`）验证抓取器改动，并检查生成的 JSON/Markdown 输出。修改解析器时，应尽可能同时测试 RSS 和 Atom 输入。不要提交凭据、`user_sources.opml`、生成的报告、日志或 Playwright 产物；这些路径已由 `.gitignore` 覆盖。
+当前使用 `py -m unittest`（214 个用例，见 CLAUDE.md）。使用受限的在线抓取（`--limit 1` 或 `--limit 3`）验证抓取器改动，并检查生成的 JSON/Markdown 输出。修改解析器时，应尽可能同时测试 RSS 和 Atom 输入。不要提交凭据、`user_sources.opml`、生成的报告、日志或 Playwright 产物；这些路径已由 `.gitignore` 覆盖。
 
 ## 提交与拉取请求规范
 

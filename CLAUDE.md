@@ -27,7 +27,7 @@ py scripts/fetch_news.py --source hackernews --limit 1 --no-save   # smoke test
 `tests/` has no `__init__.py`, so `unittest discover` **fails** (`Start directory is not importable`) and discovery from root finds 0 tests. Name modules explicitly — `scripts/` resolves as a PEP 420 namespace package from the repo root (equivalently, run the whole suite with `py -m unittest discover -s tests -p 'test_*.py'`):
 
 ```bash
-# Full suite (188 tests, no network)
+# Full suite (214 tests, no network)
 py -m unittest tests.test_default_sources tests.test_fetch_news tests.test_hardening \
   tests.test_llm_client tests.test_llm_summarize tests.test_markdown_tables \
   tests.test_reprocess_articles tests.test_scoring_rules tests.test_social_platforms \
