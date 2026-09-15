@@ -21,11 +21,14 @@ def _env_file_path():
 
 
 def _load_env_file():
-    """从 skill 根目录 .env 读取 LLM_* 变量注入 os.environ（不覆盖已有环境变量）。
+    """从 skill 根目录 .env 读取全部 KEY=VALUE 行注入 os.environ（不覆盖已有环境变量）。
 
-    让 skill 的 LLM 端点/模型与 Codex CLI（~/.codex/config.toml）解耦：
-    只有本 skill 的 pipeline 读到 .env 里当前激活的 provider 配置（商汤 sensenova 或 timicc 中转，单文件注释切换），
-    Codex 改动默认模型不影响这里。
+    当前 .env 只放 LLM_*/GROQ_*/ANYSEARCH_* 三类键（LLM 端点/模型与 Codex CLI
+    ~/.codex/config.toml 解耦：只有本 skill 的 pipeline 读到 .env 里当前激活的
+    provider 配置——商汤 sensenova 或 timicc 中转，单文件注释切换），Codex 改动
+    默认模型不影响这里。
+    注意：实现是逐行全量注入、无前缀过滤——.env 若出现非上述前缀的键也会被
+    抬进 os.environ（部分子进程可能读到而另一些读不到，属已知陷阱，勿依赖）。
     """
     global _ENV_FILE_TRIED
     if _ENV_FILE_TRIED:
