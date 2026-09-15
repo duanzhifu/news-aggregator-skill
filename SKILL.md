@@ -337,8 +337,9 @@ python scripts/fetch_news.py --source douyin,bilibili --limit 5 --keyword "前�
 ```
 
 适配器优先使用显式配置的 JSON API：`SOCIAL_API_URL_DOUYIN`、`SOCIAL_API_URL_BILIBILI`（当前仅这两个平台已接入）；可选的
-`SOCIAL_API_TOKEN_<PLATFORM>` 会作为 Bearer Token 发送。未配置或调用失败时，降级到
-Playwright 公开搜索页。浏览器会话目录可通过 `NEWS_AGGREGATOR_BROWSER_PROFILE` 配置；未配置时默认查找 `D:\news-aggregator-browser-profile`（执行过 `setup_social_login.py` 登录才有登录态，否则自动用临时会话），
+`SOCIAL_API_TOKEN_<PLATFORM>` 会作为 Bearer Token 发送。未配置时，bilibili 自动改走官方搜索 API 直连（`_bilibili_api_search`，
+`search/all/v2` 无签名、无需登录，实测稳定满 20 条/词、字段完整），直连失败才降级到
+Playwright 公开搜索页（浏览器兜底）。浏览器会话目录可通过 `NEWS_AGGREGATOR_BROWSER_PROFILE` 配置；未配置时默认查找 `D:\news-aggregator-browser-profile`（执行过 `setup_social_login.py` 登录才有登录态，否则自动用临时会话），
 不要把 Cookie、Token 或会话目录提交到仓库。首次使用或登录失效时，运行
 `py scripts/setup_social_login.py --browser edge --platform all` 在专用 Edge 窗口中登录；会话默认保存在仓库外的 `D:\news-aggregator-browser-profile`，不会读取日常 Edge Profile。
 

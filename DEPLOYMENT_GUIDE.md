@@ -196,13 +196,13 @@ python scripts/video_to_article.py <视频URL | 本地视频文件 | 视频文�
 | Source key | 平台 | 抓取方式 |
 | --- | --- | --- |
 | `douyin` | 抖音 | 可配置 JSON API 优先，失败后 Playwright 公开搜索页 |
-| `bilibili` | Bilibili | 可配置 JSON API 优先，失败后 Playwright 公开搜索页 |
+| `bilibili` | Bilibili | 可配置 JSON API 优先 → 官方搜索 API 直连（`search/all/v2` 无签名）→ Playwright 公开搜索页（兜底） |
 
 视频源（bilibili / youtube_tech）的正文证据：bilibili 优先走 cookie 字幕 API 拿真实中文 AI 字幕（`video_transcribe.py`，复用浏览器 Profile 登录态）；无字幕或失败时降级 Groq whisper 云端转写（`groq_transcribe.py`，yt-dlp 下载音频）；两者都失败才回退标题+简介。
 
 ### 配置关键词
 
-bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承）。搜索页 URL 模板已内置在 `scripts/social_platforms.py`（`_DEFAULT_SEARCH_URLS`，当前仅 bilibili 活跃）；如需自定义搜索 URL，可写一个 JSON 配置文件并用 `NEWS_AGGREGATOR_SOCIAL_CONFIG` 指向它，其 `search_urls` 字段优先于内置默认：
+bilibili 的搜索关键词**复用 `user_interests.json` 的 `topics`**（经 `NEWS_AGGREGATOR_TOPICS` 环境变量透传，由 `push_to_obsidian.py` 读取 `--topics` 后注入，子进程 `fetch_news` 继承）。bilibili 默认走官方搜索 API 直连（`fetch_social` 内 `_bilibili_api_search`，`search/all/v2` 无签名、无需登录，约 0.7s/词，返回 author/play/pubdate 全字段）；搜索页 URL 模板已内置在 `scripts/social_platforms.py`（`_DEFAULT_SEARCH_URLS`，当前仅 bilibili 活跃），**仅供 API 直连不可用时的浏览器兜底路径使用**；如需自定义搜索 URL，可写一个 JSON 配置文件并用 `NEWS_AGGREGATOR_SOCIAL_CONFIG` 指向它，其 `search_urls` 字段优先于内置默认：
 
 ```json
 {
@@ -241,7 +241,7 @@ $env:SOCIAL_API_TOKEN_DOUYIN = "<token>"
 
 支持的平台变量名为 `DOUYIN`、`BILIBILI`。接口返回应为对象列表，或外层包含 `data`、`items`、`list`、`results` 的对象列表；每条至少提供 `title` 和 `url`，可选 `summary`、`author`、`time`、`heat`、`id`。
 
-未配置接口或接口调用失败时，程序会降级至 Playwright 浏览器抓取。首次使用登录态时，运行交互式初始化命令；浏览器打开后自行完成抖音和 B 站登录，最后回到终端按 Enter 保存会话：
+未配置接口或接口调用失败时，程序会降级至官方 API 直连（仅 bilibili：`search/all/v2` 无签名）→ 仍失败则 Playwright 浏览器抓取。首次使用登录态时，运行交互式初始化命令；浏览器打开后自行完成抖音和 B 站登录，最后回到终端按 Enter 保存会话：
 
 ```powershell
 python scripts/setup_social_login.py --browser edge --platform all `

@@ -139,8 +139,8 @@ playwright install chromium
 python scripts/fetch_news.py --source douyin,bilibili --keyword "前端,AI,软件工程" --limit 5
 ```
 
-适配器优先使用 `SOCIAL_API_URL_<PLATFORM>` 配置的 JSON API，失败后使用 Playwright
-访问公开搜索页。可运行 `python scripts/setup_social_login.py --browser edge --platform all`，
+适配器优先使用 `SOCIAL_API_URL_<PLATFORM>` 配置的 JSON API；bilibili 未配置时自动改走官方搜索 API 直连（`search/all/v2` 无签名，约 0.7s/词，全字段），直连失败再使用 Playwright
+访问公开搜索页兜底。可运行 `python scripts/setup_social_login.py --browser edge --platform all`，
 在专用 Edge 窗口中登录抖音和 B 站；会话默认保存在仓库外的
 `D:\news-aggregator-browser-profile`，不会读取日常 Edge Profile。
 程序不保存明文密码、不下载视频，也不会自动处理验证码。
