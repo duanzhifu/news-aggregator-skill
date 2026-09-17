@@ -2,8 +2,8 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub stars](https://img.shields.io/github/stars/cclank/news-aggregator-skill.svg?style=social&label=Star)](https://github.com/cclank/news-aggregator-skill)
-[![GitHub forks](https://img.shields.io/github/forks/cclank/news-aggregator-skill.svg?style=social&label=Fork)](https://github.com/cclank/news-aggregator-skill/network)
+[![GitHub stars](https://img.shields.io/github/stars/duanzhifu/news-aggregator-skill.svg?style=social&label=Star)](https://github.com/duanzhifu/news-aggregator-skill)
+[![GitHub forks](https://img.shields.io/github/forks/duanzhifu/news-aggregator-skill.svg?style=social&label=Fork)](https://github.com/duanzhifu/news-aggregator-skill/network)
 
 **全网科技/金融/AI深度新闻聚合助手，专为智能 Agent 打造的高效信息引擎。**
 
@@ -78,7 +78,7 @@
 会自动处理路径依赖和配置同步。
 ```bash
 # 安装 skill
-openskills install git@github.com:cclank/news-aggregator-skill.git
+openskills install git@github.com:duanzhifu/news-aggregator-skill.git
 
 # 同步配置到 Agent
 openskills sync
@@ -87,12 +87,12 @@ openskills sync
 #### 方法 B：使用 NPX
 直接从远程仓库添加。
 ```bash
-npx skills add https://github.com/cclank/news-aggregator-skill
+npx skills add https://github.com/duanzhifu/news-aggregator-skill
 ```
 
 #### 方法 C：手动集成
 ```bash
-git clone git@github.com:cclank/news-aggregator-skill.git YourProject/.claude/skills/news-aggregator-skill
+git clone git@github.com:duanzhifu/news-aggregator-skill.git YourProject/.claude/skills/news-aggregator-skill
 ```
 
 ### 第二步：安装 Python 依赖
@@ -162,6 +162,6 @@ Obsidian 日报默认使用 `--evidence-mode snapshot`。
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cclank/news-aggregator-skill&type=Date)](https://www.star-history.com/#cclank/news-aggregator-skill&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=duanzhifu/news-aggregator-skill&type=Date)](https://www.star-history.com/#duanzhifu/news-aggregator-skill&Date)
 
 📝 **License**: MIT License
